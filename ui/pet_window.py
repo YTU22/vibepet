@@ -10,10 +10,13 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QRegion, QColor, QFont, QPixmap, QPainter, QBrush
 
-from utils.helpers import resource_path
+from utils.helpers import resource_path, set_auto_start
 from ui.settings_dialog import SettingsDialog
 from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
+from core.sys_monitor import SystemMonitorThread
+
+APP_VERSION = "1.0.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -78,6 +81,11 @@ class PetWindow(QWidget):
 
         # 应用初始鼠标穿透状态
         self.apply_mouse_passthrough()
+        
+        # 初始化系统监控面板
+        self._sys_monitor_data = {}  # 缓存最新监控数据
+        self._sys_monitor_thread = None
+        self._apply_sys_monitor_state()
 
         logger.info("Pet Window initialized.")
 
@@ -133,7 +141,121 @@ class PetWindow(QWidget):
         # Load visibility settings from config
         self.show_app_bubble_enabled = self.config.get("show_app_bubble", True)
         self.app_bubble.setVisible(self.show_app_bubble_enabled)
+        
+        # 4. 系统监控面板（位于宠物左侧）
+        self.sys_panel = QLabel(self)
+        self.sys_panel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.sys_panel.setFont(QFont("Consolas", 8))
+        self.sys_panel.setStyleSheet("""
+            QLabel {
+                background-color: rgba(43, 43, 53, 200);
+                color: #e0e0e6;
+                border: 1px solid #42424a;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }
+        """)
+        self.sys_panel.hide()
 
+    def _apply_sys_monitor_state(self):
+        """ 根据配置应用系统监控状态（启动/停止后台线程，显示/隐藏面板） """
+        enabled = self.config.get("sys_monitor_enabled", True)
+        if enabled:
+            interval = self.config.get("sys_monitor_interval", 2)
+            # 如果线程不存在或间隔变化，重新创建
+            if (self._sys_monitor_thread is None or 
+                not self._sys_monitor_thread.isRunning() or
+                self._sys_monitor_thread.interval != interval):
+                
+                if self._sys_monitor_thread is not None:
+                    self._sys_monitor_thread.stop()
+                    self._sys_monitor_thread.data_ready.disconnect(self._on_sys_monitor_data)
+                
+                self._sys_monitor_thread = SystemMonitorThread(interval=interval)
+                self._sys_monitor_thread.data_ready.connect(self._on_sys_monitor_data)
+                self._sys_monitor_thread.start()
+            self._update_sys_monitor()
+        else:
+            if self._sys_monitor_thread is not None and self._sys_monitor_thread.isRunning():
+                self._sys_monitor_thread.stop()
+                self._sys_monitor_thread = None
+            if hasattr(self, 'sys_panel'):
+                self.sys_panel.hide()
+    
+    def _format_speed(self, kbps):
+        """ 格式化网络速度：自动切换 B/s / KB/s / MB/s """
+        # kbps 已经是 KB/s 单位
+        if kbps >= 1024:
+            # MB/s
+            return f"{kbps / 1024:.2f}M"
+        elif kbps >= 1:
+            # KB/s
+            return f"{kbps:.1f}K"
+        else:
+            # B/s (< 1KB)
+            return f"{kbps * 1024:.0f}B"
+
+    @pyqtSlot(dict)
+    def _on_sys_monitor_data(self, data):
+        """ 接收后台线程的监控数据 """
+        self._sys_monitor_data = data
+        self._update_sys_monitor()
+    
+    def _update_sys_monitor(self):
+        """ 更新系统监控显示 """
+        if not self.config.get("sys_monitor_enabled", True):
+            self.sys_panel.hide()
+            return
+        
+        items = self.config.get("sys_monitor_items", {})
+        data = self._sys_monitor_data
+        
+        if not data:
+            return
+        
+        lines = []
+        if items.get("cpu", False) and "cpu" in data:
+            color = "#ff8a80" if data["cpu"] > 80 else "#81c784" if data["cpu"] < 30 else "#ffd54f"
+            lines.append(f"<span style='color:{color}'>▲ CPU {data['cpu']:.0f}%</span>")
+        
+        if items.get("memory", False) and "memory" in data:
+            color = "#ff8a80" if data["memory"] > 80 else "#81c784" if data["memory"] < 50 else "#ffd54f"
+            lines.append(f"<span style='color:{color}'>◆ MEM {data['memory']:.0f}%</span>")
+        
+        if items.get("disk", False):
+            # 显示磁盘读写速率（KB/s）
+            read_kb = data.get("disk_read", 0)
+            write_kb = data.get("disk_write", 0)
+            total_kb = read_kb + write_kb
+            if total_kb > 0:
+                disk_str = self._format_speed(total_kb)
+                lines.append(f"<span style='color:#90a4ae'>■ DISK {disk_str}</span>")
+            else:
+                lines.append(f"<span style='color:#90a4ae'>■ DISK 0K</span>")
+        
+        if items.get("network", False):
+            up = data.get("net_upload", 0)
+            down = data.get("net_download", 0)
+            up_str = self._format_speed(up)
+            down_str = self._format_speed(down)
+            lines.append(f"<span style='color:#38bdf8'>▼ {down_str} ▲ {up_str}</span>")
+        
+        if items.get("gpu", False) and "gpu" in data:
+            gpu_val = data.get("gpu", 0)
+            color = "#ff8a80" if gpu_val > 80 else "#81c784" if gpu_val < 30 else "#ffd54f"
+            lines.append(f"<span style='color:{color}'>● GPU {gpu_val:.0f}%</span>")
+        
+        if lines:
+            self.sys_panel.setText("<br>".join(lines))
+            self.sys_panel.adjustSize()
+            # 定位：宠物左侧，垂直居中
+            panel_x = 5
+            panel_y = self.bubble_height + (self.pet_size - self.sys_panel.height()) // 2
+            self.sys_panel.setGeometry(panel_x, panel_y, self.sys_panel.width(), self.sys_panel.height())
+            self.sys_panel.show()
+        else:
+            self.sys_panel.hide()
+    
     def setup_tray(self):
         self.tray = TrayIcon(self, self)
 
@@ -232,14 +354,28 @@ class PetWindow(QWidget):
         seq.start()
 
     def position_on_screen(self):
-        """ Place the pet at the CENTER of the primary screen for visibility on first launch """
+        """ 放置宠物窗口：优先使用上次保存的位置，否则右下角 """
         from PyQt6.QtWidgets import QApplication
-        screen = QApplication.primaryScreen().geometry()
-        center_x = (screen.width() - self.width()) // 2
-        center_y = (screen.height() - self.height()) // 2
-        self.move(center_x, center_y)
-        self._base_y = center_y  # 记录基准Y坐标用于呼吸浮动
-        logger.info(f"[位置] 窗口已居中到 ({center_x}, {center_y})，屏幕: {screen.width()}x{screen.height()}")
+        screen = QApplication.primaryScreen().availableGeometry()
+        
+        # 尝试读取上次保存的位置
+        saved_x = self.config.get("window_x")
+        saved_y = self.config.get("window_y")
+        
+        if saved_x is not None and saved_y is not None:
+            # 使用上次位置，但要确保在屏幕范围内
+            x = max(0, min(saved_x, screen.width() - self.width()))
+            y = max(0, min(saved_y, screen.height() - self.height()))
+            self.move(x, y)
+            self._base_y = y
+            logger.info(f"[位置] 窗口恢复到上次位置 ({x}, {y})")
+        else:
+            # 首次启动：右下角
+            x = screen.width() - self.width() - 20
+            y = screen.height() - self.height() - 20
+            self.move(x, y)
+            self._base_y = y
+            logger.info(f"[位置] 首次启动，窗口放置到右下角 ({x}, {y})，屏幕: {screen.width()}x{screen.height()}")
 
     def ensure_visible_on_screen(self):
         """ 确保窗口在屏幕可视区域内，防止坐标越界导致窗口不可见 """
@@ -562,6 +698,9 @@ class PetWindow(QWidget):
             self.move(event.globalPosition().toPoint() - self.drag_position)
             # 更新基准Y坐标（拖拽后呼吸浮动以此为准）
             self._base_y = self.y()
+            # 保存位置到配置
+            self.config.set("window_x", self.x())
+            self.config.set("window_y", self.y())
             event.accept()
 
     def mouseDoubleClickEvent(self, event):
@@ -695,6 +834,9 @@ class PetWindow(QWidget):
 
         # 重新应用气泡透明度
         self._apply_bubble_opacity()
+        
+        # 重新应用系统监控设置
+        self._apply_sys_monitor_state()
         # self.update_mask_region()
 
         logger.info("Settings applied to pet window.")
@@ -729,10 +871,11 @@ class PetWindow(QWidget):
         msg = QMessageBox(None)
         msg.setWindowTitle("关于 VibePet")
         msg.setText(
-            "<h3>VibePet 桌面宠物软件</h3>"
-            "<p><b>作者:</b> 丞客Show</p>"
-            "<p><b>官方网站:</b> <a href='https://vibeharbor.art' style='color:#81c784;'>vibeharbor.art</a></p>"
-            "<p>实时监测软件时长，守护您的作息与健康！</p>"
+            f"<h3>VibePet 桌面宠物软件</h3>"
+            f"<p><b>版本:</b> {APP_VERSION}</p>"
+            f"<p><b>作者:</b> 丞客Show</p>"
+            f"<p><b>官方网站:</b> <a href='https://vibeharbor.art' style='color:#81c784;'>vibeharbor.art</a></p>"
+            f"<p>实时监测软件时长，守护您的作息与健康！</p>"
         )
         msg.setStyleSheet("""
             QMessageBox {

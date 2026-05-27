@@ -25,12 +25,26 @@ DEFAULT_CONFIG = {
     "leisure_apps": ["chrome", "msedge", "firefox", "netflix", "bilibili", "youtube", "qq", "wechat", "dingtalk"],  # 休闲应用（追剧、社交等）
     "show_app_bubble": True,
     "show_pet_on_startup": True,      # 启动时是否显示宠物窗口
+    "auto_start": False,              # 是否开机自启动
+    "first_run": True,                # 是否首次运行（用于创建桌面快捷方式）
     # 宠物窗口外观与行为设置
     "pet_size": 200,                  # 宠物窗口大小（像素），默认200
+    "window_x": None,                 # 窗口上次X坐标
+    "window_y": None,                 # 窗口上次Y坐标
     "window_locked": False,           # 窗口位置是否锁定（禁止拖拽）
     "mouse_passthrough": False,       # 鼠标穿透模式（点击穿透到下层窗口）
     "bubble_opacity": 1.0,            # 气泡背景不透明度 (0.3-1.0)
     "random_emotions": True,          # 是否启用随机情绪
+    # 系统监控配置
+    "sys_monitor_enabled": True,      # 是否启用系统监控
+    "sys_monitor_items": {            # 显示哪些监控项
+        "cpu": True,
+        "memory": True,
+        "disk": False,
+        "network": False,
+        "gpu": False
+    },
+    "sys_monitor_interval": 2,        # 监控刷新间隔（秒）
     # 随机情绪概率配置（百分比 0-100）
     "emotion_probabilities": {
         # 白天时段 (06:00-18:00)

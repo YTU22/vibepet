@@ -62,3 +62,5 @@ $RECYCLE.BIN/
 *.old
 *.log
 /*.log
+ARCHIVE_WINDOW_INVISIBLE_BUG.md
+scratch/

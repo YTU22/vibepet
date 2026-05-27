@@ -29,10 +29,11 @@ def clean():
         shutil.rmtree(dist_dir)
         removed.append("dist/")
 
-    # 3. 删除所有 .spec 文件
+    # 3. 删除 PyInstaller 生成的临时 .spec（保留项目自带的 VibePet.spec）
     for spec in glob.glob(os.path.join(base, "*.spec")):
-        os.remove(spec)
-        removed.append(os.path.basename(spec))
+        if os.path.basename(spec) != "VibePet.spec":
+            os.remove(spec)
+            removed.append(os.path.basename(spec))
 
     # 4. 删除 __pycache__ 和 .pyc
     for root, dirs, files in os.walk(base):

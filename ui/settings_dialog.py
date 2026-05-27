@@ -1,13 +1,17 @@
 import logging
 import datetime
+import webbrowser
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
     QSlider, QTabWidget, QWidget as QWidgetBase
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QDesktopServices
 
-from utils.helpers import resource_path
+from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
+
+APP_VERSION = "1.0.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -350,6 +354,92 @@ class SettingsDialog(QDialog):
         apps_layout.addWidget(btn_reset_apps, alignment=Qt.AlignmentFlag.AlignRight)
         self.tabs.addTab(tab_apps, "进程名单")
 
+        # === Tab 5: 系统监控 ===
+        tab_sysmon = QWidgetBase()
+        sysmon_layout = QVBoxLayout(tab_sysmon)
+        sysmon_layout.setContentsMargins(15, 15, 15, 15)
+        sysmon_layout.setSpacing(12)
+
+        sysmon_group = QGroupBox("系统资源监控")
+        sysmon_inner = QVBoxLayout()
+        sysmon_inner.setSpacing(10)
+
+        self.cb_sysmon_enabled = QCheckBox("启用系统监控面板")
+        sysmon_inner.addWidget(self.cb_sysmon_enabled)
+
+        sysmon_inner.addWidget(QLabel("选择要显示的项目（可多选）："))
+        
+        self.cb_show_cpu = QCheckBox("▲ CPU 使用率")
+        self.cb_show_memory = QCheckBox("◆ 内存使用率")
+        self.cb_show_disk = QCheckBox("■ 磁盘使用率")
+        self.cb_show_network = QCheckBox("▼▲ 网络速度 (KB/s)")
+        self.cb_show_gpu = QCheckBox("● GPU 使用率（需安装 GPUtil）")
+        
+        sysmon_inner.addWidget(self.cb_show_cpu)
+        sysmon_inner.addWidget(self.cb_show_memory)
+        sysmon_inner.addWidget(self.cb_show_disk)
+        sysmon_inner.addWidget(self.cb_show_network)
+        sysmon_inner.addWidget(self.cb_show_gpu)
+        
+        # 刷新间隔
+        sysmon_form = QFormLayout()
+        sysmon_form.setSpacing(10)
+        sysmon_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.sb_sysmon_interval = QSpinBox()
+        self.sb_sysmon_interval.setRange(1, 10)
+        self.sb_sysmon_interval.setSuffix(" 秒")
+        sysmon_form.addRow("刷新间隔:", self.sb_sysmon_interval)
+        sysmon_inner.addLayout(sysmon_form)
+        
+        # 说明
+        info_gpu = QLabel("💡 GPU 监控需要安装 GPUtil：pip install gputil")
+        info_gpu.setObjectName("InfoLabel")
+        sysmon_inner.addWidget(info_gpu)
+        
+        sysmon_group.setLayout(sysmon_inner)
+        sysmon_layout.addWidget(sysmon_group)
+        
+        # Tab 5 恢复默认按钮
+        btn_reset_sysmon = QPushButton("恢复监控默认")
+        btn_reset_sysmon.setObjectName("TabResetButton")
+        btn_reset_sysmon.clicked.connect(self.reset_sysmon_tab)
+        sysmon_layout.addWidget(btn_reset_sysmon, alignment=Qt.AlignmentFlag.AlignRight)
+        sysmon_layout.addStretch()
+        self.tabs.addTab(tab_sysmon, "系统监控")
+
+        # === Tab 6: 关于 ===
+        tab_about = QWidgetBase()
+        about_layout = QVBoxLayout(tab_about)
+        about_layout.setContentsMargins(15, 15, 15, 15)
+        about_layout.setSpacing(12)
+
+        about_group = QGroupBox("关于 VibePet")
+        about_inner = QVBoxLayout()
+        about_inner.setSpacing(10)
+
+        about_inner.addWidget(QLabel("<h2 style='color:#81c784;'>VibePet 桌面宠物</h2>"))
+        about_inner.addWidget(QLabel(f"<b>版本号:</b> {APP_VERSION}"))
+        about_inner.addWidget(QLabel("<b>作者:</b> 丞客Show"))
+        
+        # 官网链接标签（支持点击打开浏览器）
+        lbl_website = QLabel("<b>官网:</b> <a href='https://vibeharbor.art' style='color:#81c784;'>vibeharbor.art</a>")
+        lbl_website.setOpenExternalLinks(True)
+        about_inner.addWidget(lbl_website)
+        
+        about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
+        
+        # 开机自启动选项
+        about_inner.addSpacing(20)
+        self.cb_auto_start = QCheckBox("开机自动启动 VibePet")
+        self.cb_auto_start.setChecked(is_auto_start_enabled())
+        self.cb_auto_start.stateChanged.connect(self._on_auto_start_changed)
+        about_inner.addWidget(self.cb_auto_start)
+        
+        about_group.setLayout(about_inner)
+        about_layout.addWidget(about_group)
+        about_layout.addStretch()
+        self.tabs.addTab(tab_about, "关于")
+
         layout.addWidget(self.tabs, stretch=1)
 
         # 4. Action Buttons
@@ -373,6 +463,14 @@ class SettingsDialog(QDialog):
 
     def _on_opacity_slider_changed(self, value):
         self.lbl_opacity_value.setText(f"{value}%")
+
+    def _on_auto_start_changed(self, state):
+        """ 处理开机自启动选项变更 """
+        enabled = state == Qt.CheckState.Checked.value
+        success = set_auto_start(enabled)
+        if success:
+            self.config.set("auto_start", enabled)
+            logger.info(f"Auto-start changed to: {enabled}")
 
     def load_values(self):
         """ Read config manager and populate form elements """
@@ -413,6 +511,16 @@ class SettingsDialog(QDialog):
 
         # 随机情绪设置
         self.cb_random_emotions.setChecked(self.config.get("random_emotions", True))
+
+        # 系统监控设置
+        self.cb_sysmon_enabled.setChecked(self.config.get("sys_monitor_enabled", True))
+        sys_items = self.config.get("sys_monitor_items", {})
+        self.cb_show_cpu.setChecked(sys_items.get("cpu", True))
+        self.cb_show_memory.setChecked(sys_items.get("memory", True))
+        self.cb_show_disk.setChecked(sys_items.get("disk", False))
+        self.cb_show_network.setChecked(sys_items.get("network", False))
+        self.cb_show_gpu.setChecked(sys_items.get("gpu", False))
+        self.sb_sysmon_interval.setValue(self.config.get("sys_monitor_interval", 2))
 
         # 加载各时段概率
         probs = self.config.get("emotion_probabilities", {})
@@ -499,6 +607,17 @@ class SettingsDialog(QDialog):
         self.config.set("mouse_passthrough", self.cb_mouse_passthrough.isChecked())
         self.config.set("show_app_bubble", self.cb_show_bubble.isChecked())
         self.config.set("bubble_opacity", self.slider_bubble_opacity.value() / 100.0)
+
+        # 系统监控设置
+        self.config.set("sys_monitor_enabled", self.cb_sysmon_enabled.isChecked())
+        self.config.set("sys_monitor_items", {
+            "cpu": self.cb_show_cpu.isChecked(),
+            "memory": self.cb_show_memory.isChecked(),
+            "disk": self.cb_show_disk.isChecked(),
+            "network": self.cb_show_network.isChecked(),
+            "gpu": self.cb_show_gpu.isChecked()
+        })
+        self.config.set("sys_monitor_interval", self.sb_sysmon_interval.value())
 
         # 随机情绪设置
         self.config.set("random_emotions", self.cb_random_emotions.isChecked())
@@ -690,6 +809,26 @@ class SettingsDialog(QDialog):
         self.te_leisure.setPlainText(", ".join(DEFAULT_CONFIG["leisure_apps"]))
         self.settings_changed.emit()
         self._show_ok("进程名单已恢复为默认值！")
+
+    def reset_sysmon_tab(self):
+        """ 恢复系统监控Tab为默认 """
+        if not self._confirm_reset("系统监控"):
+            return
+        from core.config import DEFAULT_CONFIG
+        self.config.set("sys_monitor_enabled", DEFAULT_CONFIG["sys_monitor_enabled"])
+        self.config.set("sys_monitor_items", DEFAULT_CONFIG["sys_monitor_items"].copy())
+        self.config.set("sys_monitor_interval", DEFAULT_CONFIG["sys_monitor_interval"])
+        self.config.save_config()
+        self.cb_sysmon_enabled.setChecked(DEFAULT_CONFIG["sys_monitor_enabled"])
+        items = DEFAULT_CONFIG["sys_monitor_items"]
+        self.cb_show_cpu.setChecked(items["cpu"])
+        self.cb_show_memory.setChecked(items["memory"])
+        self.cb_show_disk.setChecked(items["disk"])
+        self.cb_show_network.setChecked(items["network"])
+        self.cb_show_gpu.setChecked(items["gpu"])
+        self.sb_sysmon_interval.setValue(DEFAULT_CONFIG["sys_monitor_interval"])
+        self.settings_changed.emit()
+        self._show_ok("系统监控已恢复为默认值！")
 
     def apply_styles(self):
         """ Apply modern dark stylesheet """

@@ -30,7 +30,7 @@ import logging
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QLockFile
 
-from utils.helpers import get_app_dir
+from utils.helpers import get_app_dir, create_desktop_shortcut, set_auto_start
 
 # Setup Logging first so other modules can use it
 log_path = os.path.join(get_app_dir(), "vibe_pet.log")
@@ -87,6 +87,24 @@ def main():
         config_mgr = ConfigManager()
         db_mgr = DatabaseManager()
         reminder_mgr = ReminderManager(config_mgr)
+        
+        # 首次运行：创建桌面快捷方式
+        if config_mgr.get("first_run", True):
+            try:
+                exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
+                icon_path = os.path.join(get_app_dir(), "assets", "icon.png")
+                if create_desktop_shortcut(exe_path, "VibePet", icon_path):
+                    config_mgr.set("first_run", False)
+                    logger.info("Desktop shortcut created successfully.")
+                else:
+                    logger.warning("Failed to create desktop shortcut.")
+            except Exception as e:
+                logger.error(f"Error creating desktop shortcut: {e}")
+        
+        # 同步开机自启动注册表状态（防止用户手动修改注册表后不一致）
+        auto_start_config = config_mgr.get("auto_start", False)
+        if auto_start_config:
+            set_auto_start(True)
         
         # Main desktop pet window
         pet_win = PetWindow(db_mgr, config_mgr, reminder_mgr)

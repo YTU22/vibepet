@@ -2,7 +2,9 @@ import logging
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu, QApplication
 from PyQt6.QtGui import QIcon, QAction, QPixmap
 from PyQt6.QtCore import Qt
-from utils.helpers import resource_path
+from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
+
+APP_VERSION = "1.0.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -79,7 +81,21 @@ class TrayIcon(QSystemTrayIcon):
 
         self.menu.addSeparator()
 
-        # 6. Exit App
+        # 6. 开机自启动
+        self.act_auto_start = QAction("开机自启动", self)
+        self.act_auto_start.setCheckable(True)
+        self.act_auto_start.setChecked(is_auto_start_enabled())
+        self.act_auto_start.triggered.connect(self.toggle_auto_start)
+        self.menu.addAction(self.act_auto_start)
+
+        self.menu.addSeparator()
+
+        # 7. 版本号（不可点击）
+        self.act_version = QAction(f"v{APP_VERSION}", self)
+        self.act_version.setEnabled(False)
+        self.menu.addAction(self.act_version)
+
+        # 8. Exit App
         self.act_exit = QAction("完全退出", self)
         self.act_exit.triggered.connect(self.main_win.quit_application)
         self.menu.addAction(self.act_exit)
@@ -134,6 +150,16 @@ class TrayIcon(QSystemTrayIcon):
         elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:  # Double click
             self.toggle_pet_visibility()
 
+    def toggle_auto_start(self):
+        """ 切换开机自启动状态 """
+        new_state = self.act_auto_start.isChecked()
+        success = set_auto_start(new_state)
+        if success:
+            self.main_win.config.set("auto_start", new_state)
+            logger.info(f"Auto-start set to: {new_state}")
+        else:
+            self.act_auto_start.setChecked(not new_state)
+
     def update_menu_text(self):
         """ Sync menu toggle text with current window visibility """
         if self.main_win.isVisible():
@@ -143,3 +169,4 @@ class TrayIcon(QSystemTrayIcon):
         # 同步锁定和穿透状态显示
         self.act_lock.setChecked(self.main_win.window_locked)
         self.act_passthrough.setChecked(self.main_win.mouse_passthrough)
+        self.act_auto_start.setChecked(is_auto_start_enabled())
