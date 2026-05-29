@@ -391,10 +391,6 @@ class SettingsDialog(QDialog):
         sysmon_form.addRow("刷新间隔:", self.sb_sysmon_interval)
         sysmon_inner.addLayout(sysmon_form)
         
-        # 说明
-        info_gpu = QLabel("💡 GPU 监控采用绿色零依赖方案：NVIDIA 通过 NVML DLL，AMD/Intel 通过 Windows 性能计数器")
-        info_gpu.setObjectName("InfoLabel")
-        sysmon_inner.addWidget(info_gpu)
         
         sysmon_group.setLayout(sysmon_inner)
         sysmon_layout.addWidget(sysmon_group)
