@@ -11,7 +11,7 @@ from PyQt6.QtGui import QDesktopServices
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 logger = logging.getLogger("vibe_pet")
 

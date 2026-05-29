@@ -16,7 +16,7 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 logger = logging.getLogger("vibe_pet")
 
