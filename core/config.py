@@ -65,7 +65,69 @@ DEFAULT_CONFIG = {
             "happy": 5,      # 夜晚开心概率低
             "tired": 15      # 夜晚疲惫概率高
         }
-    }
+    },
+    "rules": [
+        {
+            "id": "fatigue",
+            "name": "每日总时间疲劳提醒",
+            "threshold_key": "fatigue_minutes",
+            "condition": "today_total >= threshold",
+            "bubble_text": "今日累计工作/使用时间过长，强制建议休息！",
+            "toast_text": "您今天已经使用电脑超过 {threshold} 分钟，请立即休息！",
+            "is_toast": True,
+            "animation": "angry",
+            "priority": 60,
+            "cooldown": 1800
+        },
+        {
+            "id": "late_night",
+            "name": "深夜防熬夜提醒",
+            "threshold_key": "late_night_minutes",
+            "condition": "is_late_night and late_night_active >= threshold",
+            "bubble_text": "很晚了，保持良好作息该睡觉啦~",
+            "toast_text": "夜深了，连续使用电脑已超 {threshold} 分钟，请尽快休息睡觉！",
+            "is_toast": True,
+            "animation": "sleep",
+            "priority": 50,
+            "cooldown": 1800
+        },
+        {
+            "id": "game_sedentary",
+            "name": "游戏沉迷提醒",
+            "threshold_key": "game_limit_minutes",
+            "condition": "current_category == 'game' and today_game >= threshold",
+            "bubble_text": "游戏玩太久啦，让眼睛休息一下~",
+            "toast_text": "今日游戏时间已累计超过 {threshold} 分钟，请注意休息！",
+            "is_toast": True,
+            "animation": "tired",
+            "priority": 40,
+            "cooldown": 1800
+        },
+        {
+            "id": "sedentary",
+            "name": "久坐提醒",
+            "threshold_key": "sedentary_minutes",
+            "condition": "active_time_since_idle >= threshold",
+            "bubble_text": "坐太久啦，站起来活动活动！",
+            "toast_text": "您已连续使用电脑超过 {threshold} 分钟，请站起来活动一下身体！",
+            "is_toast": True,
+            "animation": "tired",
+            "priority": 30,
+            "cooldown": 1800
+        },
+        {
+            "id": "positive",
+            "name": "正向激励（工作）",
+            "threshold_key": "positive_minutes",
+            "condition": "current_category == 'work'",
+            "bubble_text": "加油，高效产出！",
+            "toast_text": "看到你开始专心工作了，加油！",
+            "is_toast": False,
+            "animation": "happy",
+            "priority": 20,
+            "cooldown": 1800
+        }
+    ]
 }
 
 from utils.helpers import get_app_dir
@@ -81,6 +143,7 @@ class ConfigManager:
             self.config_path = config_path
             
         self.config = {}
+        self._last_mtime = 0
         self.load_config()
 
     def load_config(self):
@@ -92,14 +155,29 @@ class ConfigManager:
             return
             
         try:
+            mtime = os.path.getmtime(self.config_path)
             with open(self.config_path, "r", encoding="utf-8") as f:
                 self.config = json.load(f)
+            self._last_mtime = mtime
             # Ensure all default keys exist (in case the config format was updated)
             self._fill_missing_keys(self.config, DEFAULT_CONFIG)
         except Exception as e:
             logger.error(f"Failed to read config.json: {e}. Resetting to defaults.")
             self.config = DEFAULT_CONFIG.copy()
             self.save_config()
+
+    def check_and_reload(self):
+        """ 检查磁盘上的配置文件是否被修改，若被修改则在内存中重新加载它 """
+        if os.path.exists(self.config_path):
+            try:
+                mtime = os.path.getmtime(self.config_path)
+                if self._last_mtime != mtime:
+                    logger.info("Config file modification detected on disk. Reloading...")
+                    self.load_config()
+                    return True
+            except Exception as e:
+                logger.error(f"Failed to check config file modification time: {e}")
+        return False
 
     def _fill_missing_keys(self, target, source):
         """ Recursively fill missing keys in target dict from source dict """
@@ -108,12 +186,16 @@ class ConfigManager:
                 target[k] = v
             elif isinstance(v, dict) and isinstance(target[k], dict):
                 self._fill_missing_keys(target[k], v)
+            elif isinstance(v, list) and k == "rules":
+                if not isinstance(target[k], list) or len(target[k]) != len(v):
+                    target[k] = v
 
     def save_config(self):
         """ Save current config to config.json """
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=4, ensure_ascii=False)
+            self._last_mtime = os.path.getmtime(self.config_path)
             logger.info("Configuration saved successfully.")
         except Exception as e:
             logger.error(f"Failed to save config.json: {e}")

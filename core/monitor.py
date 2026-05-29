@@ -14,14 +14,11 @@ logger = logging.getLogger("vibe_pet")
 
 class MonitorThread(QThread):
     # Signals for communicating with PyQt UI
-    # status_updated: (app_name, category, is_idle, today_total_s, today_game_s)
     status_updated = pyqtSignal(str, str, bool, int, int)
-    # animation_changed: ('idle', 'work', 'happy', 'tired', 'sleep', 'angry')
     animation_changed = pyqtSignal(str)
-    # show_bubble: (bubble_text)
     show_bubble = pyqtSignal(str)
-    # show_warning_dialog: trigger warning dialog
     show_warning_dialog = pyqtSignal()
+    config_reloaded = pyqtSignal()
 
     def __init__(self, db_manager, config_manager, reminder_manager, parent=None):
         super().__init__(parent)
@@ -141,6 +138,10 @@ class MonitorThread(QThread):
         last_flush_time = time.time()
         
         while self._running:
+            # Check for config modifications on disk and reload if necessary
+            if self.config.check_and_reload():
+                self.config_reloaded.emit()
+                
             start_time = time.time()
             
             # 1. Check if user is idle (no input for >= 5 minutes)

@@ -146,6 +146,7 @@ def main():
         monitor_thread.animation_changed.connect(pet_win.load_animation)
         monitor_thread.show_bubble.connect(pet_win.show_bubble_message)
         monitor_thread.show_warning_dialog.connect(pet_win.trigger_fatigue_warning)
+        monitor_thread.config_reloaded.connect(pet_win.on_settings_changed)
         
         # Start background loop
         monitor_thread.start()

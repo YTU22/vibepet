@@ -17,6 +17,7 @@ class DatabaseManager:
             self.db_path = db_path
             
         self.init_db()
+        self.auto_cleanup_data(30)
 
     def _get_conn(self):
         """ Get database connection with custom timeouts and parameters """
@@ -192,3 +193,61 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error exporting data to CSV: {e}")
             return False
+
+    def auto_cleanup_data(self, retention_days=30):
+        """
+        将 retention_days 天前的历史详细进程数据进行降维聚合：
+        每个日期和分类的所有进程明细合并为一条记录，进程名为 '<aggregated>'。
+        这可以大幅缩减数据库体积，同时保留历史分类统计趋势。
+        """
+        try:
+            today = datetime.date.today()
+            cutoff_date = (today - datetime.timedelta(days=retention_days)).isoformat()
+            
+            with self._get_conn() as conn:
+                # 1. 查找 cutoff_date 之前，且含有非聚合进程数据的日期
+                cursor = conn.execute("""
+                    SELECT DISTINCT date 
+                    FROM usage 
+                    WHERE date < ? AND process_name NOT LIKE '<aggregated_%>'
+                """, (cutoff_date,))
+                dates_to_aggregate = [row[0] for row in cursor.fetchall()]
+                
+                if not dates_to_aggregate:
+                    logger.info("No old detailed records need to be aggregated.")
+                    return
+                
+                logger.info(f"Database cleanup: Found {len(dates_to_aggregate)} days to aggregate.")
+                
+                for d in dates_to_aggregate:
+                    # 2. 计算该日期按 category 汇总的总时长
+                    cursor = conn.execute("""
+                        SELECT category, SUM(duration_seconds) as total 
+                        FROM usage 
+                        WHERE date = ? 
+                        GROUP BY category
+                    """, (d,))
+                    summary = cursor.fetchall()
+                    
+                    # 3. 删除该日期的所有旧记录
+                    conn.execute("DELETE FROM usage WHERE date = ?", (d,))
+                    
+                    # 4. 插入聚合后的记录
+                    for row in summary:
+                        conn.execute("""
+                            INSERT INTO usage (date, process_name, category, duration_seconds)
+                            VALUES (?, ?, ?, ?)
+                        """, (d, f"<aggregated_{row['category']}>", row["category"], row["total"]))
+                        
+            # 5. 执行 VACUUM 整理数据库文件以释放空间（不能在 transaction 内执行，故建立新连接）
+            try:
+                conn_vac = self._get_conn()
+                conn_vac.isolation_level = None
+                conn_vac.execute("VACUUM")
+                conn_vac.close()
+                logger.info("Database auto-cleanup and VACUUM compression completed.")
+            except Exception as ev:
+                logger.warning(f"Failed to run database VACUUM: {ev}")
+                
+        except Exception as e:
+            logger.error(f"Error during database auto-cleanup: {e}")

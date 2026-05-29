@@ -42,11 +42,19 @@ class ReminderManager:
         # Callback for showing a bubble on the pet window: fn(text)
         self.bubble_callback = None
         # Callback for showing an angry warning dialog: fn()
-        self.warning_dialog_callback = None
+        self.warning_dialog_cb = None
 
     def set_callbacks(self, bubble_cb, warning_dialog_cb):
         self.bubble_callback = bubble_cb
         self.warning_dialog_cb = warning_dialog_cb
+
+    def _evaluate_condition(self, condition, context):
+        try:
+            # 安全地进行 eval：屏蔽 __builtins__
+            return eval(condition, {"__builtins__": None}, context)
+        except Exception as e:
+            logger.error(f"Error evaluating rule condition '{condition}': {e}")
+            return False
 
     def show_toast(self, title, message):
         """ Show Windows Toast notification in a background thread """
@@ -206,117 +214,99 @@ class ReminderManager:
             str: Target animation state ('angry', 'sleep', 'tired', 'happy', 'work', 'idle')
         """
         now = time.time()
+        rules = self.config.get("rules", [])
 
-        # 1. Evaluate positive incentive state machine (game -> work transition)
-        if current_category == "work" and not is_idle:
-            if self.last_category == "game" and self.work_start_time == 0:
-                # User just switched from game to work, start counting
-                self.work_start_time = now
-                logger.info("Category switched from game to work. Positive timer started.")
-            elif self.work_start_time > 0:
-                # User is continuing to work
-                work_duration = now - self.work_start_time
-                threshold_seconds = self.config.get_threshold("positive_minutes") * 60
-                if work_duration >= threshold_seconds:
-                    # Trigger happy reminder
-                    triggered = self.trigger_reminder(
-                        "positive",
-                        "加油，高效产出！",
-                        "看到你开始专心工作了，加油！",
-                        is_toast=False  # No need for intrusive toast for happy encouragement
-                    )
-                    if triggered:
-                        # Set happy animation to run for 60 seconds
-                        self.happy_until = now + 60
-                    self.work_start_time = 0  # Reset timer
-        else:
-            # If they idle or switch away from work, reset positive incentive timer
-            self.work_start_time = 0
-
-        # Save current category for next check
-        if current_category != "idle":
-            self.last_category = current_category
-
-        # 2. Track late night activity (23:00 - 06:30)
+        # 1. Evaluate late night activity (23:00 - 06:30)
         current_time = datetime.datetime.now().time()
         is_late_night_window = (current_time >= datetime.time(23, 0)) or (current_time <= datetime.time(6, 30))
 
         if is_late_night_window and not is_idle:
-            # Increment late night active seconds by the poll interval (2s)
             self.late_night_active_seconds += 2
         elif is_idle or not is_late_night_window:
-            # If idle (which means idle >= 5 mins) or out of window, reset the counter
             if is_idle:
                 self.late_night_active_seconds = 0
 
-        # 3. 检查随机情绪
+        # 2. Evaluate positive incentive state machine (game -> work transition)
+        positive_rule = next((r for r in rules if r["id"] == "positive"), None)
+        if positive_rule and self.config.get_reminder_switch("positive"):
+            if current_category == "work" and not is_idle:
+                if self.last_category == "game" and self.work_start_time == 0:
+                    self.work_start_time = now
+                    logger.info("Category switched from game to work. Positive timer started.")
+                elif self.work_start_time > 0:
+                    work_duration = now - self.work_start_time
+                    threshold_val = self.config.get_threshold(positive_rule["threshold_key"])
+                    threshold_seconds = threshold_val * 60
+                    if work_duration >= threshold_seconds:
+                        bubble_text = positive_rule.get("bubble_text", "加油，高效产出！").format(threshold=int(threshold_val))
+                        toast_text = positive_rule.get("toast_text", "看到你开始专心工作了，加油！").format(threshold=int(threshold_val))
+                        triggered = self.trigger_reminder(
+                            "positive",
+                            bubble_text,
+                            toast_text,
+                            is_toast=positive_rule.get("is_toast", False)
+                        )
+                        if triggered:
+                            self.happy_until = now + 60
+                        self.work_start_time = 0
+            else:
+                self.work_start_time = 0
+
+        if current_category != "idle":
+            self.last_category = current_category
+
+        # 3. Check random emotions
         self._check_random_emotions(current_category, is_idle)
 
-        # --- Check Rule Conditions & Triggers ---
+        # 4. Check other rules via dynamic rules engine
+        active_rules = []
+        for rule in rules:
+            if rule["id"] == "positive":
+                continue
+                
+            rule_id = rule["id"]
+            if not self.config.get_reminder_switch(rule_id):
+                continue
+                
+            threshold_val = self.config.get_threshold(rule["threshold_key"])
+            
+            # Setup evaluation context (values in minutes for user convenience)
+            context = {
+                "today_total": today_total / 60.0,
+                "today_game": today_game / 60.0,
+                "today_work": today_work / 60.0,
+                "active_time_since_idle": active_time_since_idle / 60.0,
+                "late_night_active": self.late_night_active_seconds / 60.0,
+                "is_late_night": is_late_night_window,
+                "current_category": current_category,
+                "is_idle": is_idle,
+                "threshold": threshold_val
+            }
+            
+            # Evaluate condition
+            if self._evaluate_condition(rule["condition"], context):
+                active_rules.append(rule)
+                
+                # Format texts
+                bubble_text = rule.get("bubble_text", "").format(threshold=int(threshold_val))
+                toast_text = rule.get("toast_text", "").format(threshold=int(threshold_val))
+                
+                # Enforce notification trigger
+                triggered = self.trigger_reminder(rule_id, bubble_text, toast_text, rule.get("is_toast", True))
+                if triggered and rule_id == "fatigue" and self.warning_dialog_cb:
+                    self.warning_dialog_cb()
 
-        # Rule A: Fatigue (Total hours > 8h)
-        fatigue_threshold = self.config.get_threshold("fatigue_minutes") * 60
-        is_fatigued = today_total >= fatigue_threshold
-        if is_fatigued:
-            triggered = self.trigger_reminder(
-                "fatigue",
-                "今日累计工作/使用时间过长，强制建议休息！",
-                "您今天已经使用电脑超过 8 小时，请立即休息！",
-                is_toast=True
-            )
-            if triggered and self.warning_dialog_callback:
-                self.warning_dialog_callback()  # Trigger force dialog
-
-        # Rule B: Late Night (active in window > 30m)
-        late_night_threshold = self.config.get_threshold("late_night_minutes") * 60
-        is_late_night_overtime = is_late_night_window and (self.late_night_active_seconds >= late_night_threshold)
-        if is_late_night_overtime:
-            self.trigger_reminder(
-                "late_night",
-                "很晚了，保持良好作息该睡觉啦~",
-                "夜深了，连续使用电脑已超半小时，请尽快休息睡觉！",
-                is_toast=True
-            )
-
-        # Rule C: Game Sedentary (Game duration > 2h)
-        game_threshold = self.config.get_threshold("game_limit_minutes") * 60
-        is_game_overtime = today_game >= game_threshold
-        if is_game_overtime and current_category == "game":
-            self.trigger_reminder(
-                "game_sedentary",
-                "游戏玩太久啦，让眼睛休息一下~",
-                "今日游戏时间已累计超过 2 小时，请注意休息！",
-                is_toast=True
-            )
-
-        # Rule D: Sedentary (Active since last idle > 1h)
-        sedentary_threshold = self.config.get_threshold("sedentary_minutes") * 60
-        # active_time_since_idle is seconds since last 5-min idle period
-        is_sedentary = active_time_since_idle >= sedentary_threshold
-        if is_sedentary:
-            self.trigger_reminder(
-                "sedentary",
-                "坐太久啦，站起来活动活动！",
-                "您已连续使用电脑超过 1 小时，请站起来活动一下身体！",
-                is_toast=True
-            )
-
-        # --- Determine Animation State based on Priorities ---
-        # Priority: angry > sleep > tired > happy > work > idle
-
-        if is_fatigued:
-            return "angry"
-        elif is_late_night_overtime:
-            return "sleep"
-        elif is_game_overtime and (current_category == "game" or current_category == "idle"):
-            # Pet looks tired if they are gaming too much and are still gaming/idle
-            return "tired"
+        # Sort rules that are currently met/active by priority descending
+        active_rules.sort(key=lambda r: r.get("priority", 0), reverse=True)
+        
+        # Priority mapping: active rules -> happy -> work -> random_emotions -> idle
+        if active_rules:
+            return active_rules[0]["animation"]
         elif now < self.happy_until:
             return "happy"
         elif current_category == "work" and not is_idle:
             return "work"
         else:
-            # 基础状态下，检查是否有随机情绪
             if self.random_emotion_active:
                 return self.random_emotion_state
             return "idle"
