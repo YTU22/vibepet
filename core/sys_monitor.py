@@ -20,6 +20,9 @@ class SystemMonitorThread(QThread):
         self.interval = interval
         self.running = True
         
+        # 初始化 CPU 占用率基准（非阻塞采样）
+        psutil.cpu_percent(interval=None)
+        
         # 初始化网络计数器
         self.last_net = self._get_physical_net_io()
         self.last_net_time = time.time()
@@ -77,20 +80,73 @@ class SystemMonitorThread(QThread):
             return NetIO(bytes_recv=0, bytes_sent=0)
     
     def _try_init_gpu(self):
-        """ 尝试初始化 GPU 监控 """
+        """ 尝试以绿色零依赖方式（ctypes 加载 NVML DLL 或 win32pdh）初始化 GPU 监控 """
+        # 1. 尝试加载 Nvidia NVML DLL
+        import ctypes
+        import os
+        
+        paths = [
+            os.path.join(os.environ.get("SystemRoot", "C:\\Windows"), "System32\\nvml.dll"),
+            "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvml.dll"
+        ]
+        
+        self._nvml_lib = None
+        for path in paths:
+            if os.path.exists(path):
+                try:
+                    self._nvml_lib = ctypes.CDLL(path)
+                    break
+                except Exception:
+                    pass
+                    
+        if self._nvml_lib:
+            try:
+                # 初始化 NVML
+                if self._nvml_lib.nvmlInit() == 0:
+                    self._gpu_device = ctypes.c_void_p()
+                    if self._nvml_lib.nvmlDeviceGetHandleByIndex(0, ctypes.byref(self._gpu_device)) == 0:
+                        self._gpu_available = True
+                        logger.info("NVIDIA GPU monitoring enabled via direct NVML loading (zero-dependency).")
+                        return
+                    else:
+                        self._nvml_lib.nvmlShutdown()
+            except Exception as e:
+                logger.debug(f"NVML init failed: {e}")
+                
+        # 2. 如果无 Nvidia 卡或加载失败，初始化 win32pdh 作为 Fallback (支持 AMD/Intel/Nvidia)
         try:
-            import gputil
-            gpus = gputil.getGPUs()
-            if gpus:
-                self._gpu_available = True
-                logger.info(f"GPU monitoring enabled (GPUtil), found {len(gpus)} GPU(s)")
-        except ImportError:
-            logger.info("GPUtil not installed, GPU monitoring disabled")
+            import win32pdh
+            self._pdh_query = win32pdh.OpenQuery()
+            self._pdh_counter = win32pdh.AddCounter(self._pdh_query, "\\GPU Engine(*)\\Utilization Percentage")
+            win32pdh.CollectQueryData(self._pdh_query)
+            logger.info("Universal GPU monitoring enabled via Windows Performance Counters (win32pdh).")
         except Exception as e:
-            logger.debug(f"GPU init failed: {e}")
+            logger.error(f"Failed to initialize universal GPU performance counters: {e}")
+            self._pdh_query = None
+            self._pdh_counter = None
     
     def stop(self):
         self.running = False
+        
+        # 释放 win32pdh 查询
+        if hasattr(self, '_pdh_query') and self._pdh_query:
+            try:
+                import win32pdh
+                win32pdh.CloseQuery(self._pdh_query)
+            except Exception:
+                pass
+            self._pdh_query = None
+            self._pdh_counter = None
+            
+        # 释放 NVML
+        if hasattr(self, '_gpu_available') and self._gpu_available and self._nvml_lib:
+            try:
+                self._nvml_lib.nvmlShutdown()
+            except Exception:
+                pass
+            self._gpu_available = False
+            self._nvml_lib = None
+            
         self.wait(1000)
     
     def run(self):
@@ -100,9 +156,9 @@ class SystemMonitorThread(QThread):
             loop_start = time.time()
             data = {}
             
-            # 1. CPU：阻塞采样 0.5 秒，得到真实平均占用
+            # 1. CPU：非阻塞采样，计算自上次采样以来的平均占用
             try:
-                data['cpu'] = psutil.cpu_percent(interval=0.5)
+                data['cpu'] = psutil.cpu_percent(interval=None)
             except Exception as e:
                 logger.error(f"CPU sample failed: {e}")
                 data['cpu'] = 0.0
@@ -174,25 +230,39 @@ class SystemMonitorThread(QThread):
                 data['net_upload'] = 0.0
                 data['net_download'] = 0.0
             
-            # 5. GPU（可选）：仅当 gputil 安装时读取
-            if self._gpu_available:
+            # 5. GPU（绿色读取，无 GPUtil 依赖）
+            gpu_val = 0.0
+            gpu_mem_val = 0.0
+            
+            if self._gpu_available and self._nvml_lib and self._gpu_device:
                 try:
-                    import gputil
-                    gpus = gputil.getGPUs()
-                    if gpus:
-                        gpu = gpus[0]
-                        data['gpu'] = gpu.load * 100
-                        data['gpu_memory'] = gpu.memoryUtil * 100
-                    else:
-                        data['gpu'] = 0.0
-                        data['gpu_memory'] = 0.0
+                    import ctypes
+                    class nvmlUtilization_t(ctypes.Structure):
+                        _fields_ = [
+                            ('gpu', ctypes.c_uint),
+                            ('memory', ctypes.c_uint)
+                        ]
+                    rates = nvmlUtilization_t()
+                    if self._nvml_lib.nvmlDeviceGetUtilizationRates(self._gpu_device, ctypes.byref(rates)) == 0:
+                        gpu_val = float(rates.gpu)
+                        gpu_mem_val = float(rates.memory)
                 except Exception as e:
-                    logger.debug(f"GPU sample failed: {e}")
-                    data['gpu'] = 0.0
-                    data['gpu_memory'] = 0.0
-            else:
-                data['gpu'] = 0.0
-                data['gpu_memory'] = 0.0
+                    logger.debug(f"NVML GPU query failed: {e}")
+            elif self._pdh_query and self._pdh_counter:
+                try:
+                    import win32pdh
+                    win32pdh.CollectQueryData(self._pdh_query)
+                    items = win32pdh.GetFormattedCounterArray(self._pdh_counter, win32pdh.PDH_FMT_DOUBLE)
+                    total_3d = 0.0
+                    for name, val in items.items():
+                        if "engtype_3d" in name.lower():
+                            total_3d += val
+                    gpu_val = min(100.0, total_3d)
+                except Exception as e:
+                    logger.debug(f"PDH GPU query failed: {e}")
+            
+            data['gpu'] = gpu_val
+            data['gpu_memory'] = gpu_mem_val
             
             # 发射数据
             self.data_ready.emit(data)

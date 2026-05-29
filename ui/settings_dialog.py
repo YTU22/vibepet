@@ -373,7 +373,7 @@ class SettingsDialog(QDialog):
         self.cb_show_memory = QCheckBox("◆ 内存使用率")
         self.cb_show_disk = QCheckBox("■ 磁盘使用率")
         self.cb_show_network = QCheckBox("▼▲ 网络速度 (KB/s)")
-        self.cb_show_gpu = QCheckBox("● GPU 使用率（需安装 GPUtil）")
+        self.cb_show_gpu = QCheckBox("● GPU 使用率（零依赖，支持 NVIDIA/AMD/Intel）")
         
         sysmon_inner.addWidget(self.cb_show_cpu)
         sysmon_inner.addWidget(self.cb_show_memory)
@@ -392,7 +392,7 @@ class SettingsDialog(QDialog):
         sysmon_inner.addLayout(sysmon_form)
         
         # 说明
-        info_gpu = QLabel("💡 GPU 监控需要安装 GPUtil：pip install gputil")
+        info_gpu = QLabel("💡 GPU 监控采用绿色零依赖方案：NVIDIA 通过 NVML DLL，AMD/Intel 通过 Windows 性能计数器")
         info_gpu.setObjectName("InfoLabel")
         sysmon_inner.addWidget(info_gpu)
         

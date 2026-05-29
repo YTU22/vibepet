@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
         "network": False,
         "gpu": False
     },
-    "sys_monitor_interval": 2,        # 监控刷新间隔（秒）
+    "sys_monitor_interval": 1,        # 监控刷新间隔（秒）
     # 随机情绪概率配置（百分比 0-100）
     "emotion_probabilities": {
         # 白天时段 (06:00-18:00)
