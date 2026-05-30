@@ -4,10 +4,11 @@ import webbrowser
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
-    QSlider, QTabWidget, QWidget as QWidgetBase
+    QSlider, QTabWidget, QWidget as QWidgetBase, QListWidget, QListWidgetItem,
+    QScrollArea, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QKeySequence
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
@@ -347,6 +348,93 @@ class SettingsDialog(QDialog):
 
         apps_group.setLayout(apps_inner)
         apps_layout.addWidget(apps_group)
+        
+        # === 未分类进程检测列表 ===
+        detected_group = QGroupBox("检测到但未分类的进程")
+        detected_layout = QVBoxLayout()
+        detected_layout.setSpacing(8)
+        
+        # 说明标签
+        detected_info = QLabel("💡 下方列出桌宠检测到但尚未分类的进程。选中后按快捷键快速分类：")
+        detected_info.setWordWrap(True)
+        detected_info.setObjectName("InfoLabel")
+        detected_layout.addWidget(detected_info)
+        
+        # 快捷键说明
+        shortcut_info = QLabel("<b>快捷键：</b> W-办公 | G-游戏 | L-休闲 | O-其他 | Delete-移除")
+        shortcut_info.setWordWrap(True)
+        shortcut_info.setObjectName("InfoLabel")
+        detected_layout.addWidget(shortcut_info)
+        
+        # 列表控件（带滚动条）
+        self.lw_detected = QListWidget()
+        self.lw_detected.setMinimumHeight(120)
+        self.lw_detected.setMaximumHeight(200)
+        self.lw_detected.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.lw_detected.setStyleSheet("""
+            QListWidget {
+                background-color: #2b2b35;
+                color: #e0e0e6;
+                border: 1px solid #42424a;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 4px 8px;
+                border-radius: 3px;
+            }
+            QListWidget::item:selected {
+                background-color: #37474f;
+                color: #81c784;
+            }
+            QListWidget::item:hover {
+                background-color: #353545;
+            }
+        """)
+        # 绑定快捷键
+        self.lw_detected.keyPressEvent = self._on_detected_list_keypress
+        detected_layout.addWidget(self.lw_detected)
+        
+        # 分类按钮行
+        btn_classify_layout = QHBoxLayout()
+        btn_classify_layout.setSpacing(8)
+        
+        self.btn_to_work = QPushButton("办公 (W)")
+        self.btn_to_work.setToolTip("将选中进程添加到办公类")
+        self.btn_to_work.clicked.connect(lambda: self._classify_selected("work"))
+        
+        self.btn_to_game = QPushButton("游戏 (G)")
+        self.btn_to_game.setToolTip("将选中进程添加到游戏类")
+        self.btn_to_game.clicked.connect(lambda: self._classify_selected("game"))
+        
+        self.btn_to_leisure = QPushButton("休闲 (L)")
+        self.btn_to_leisure.setToolTip("将选中进程添加到休闲类")
+        self.btn_to_leisure.clicked.connect(lambda: self._classify_selected("leisure"))
+        
+        self.btn_to_other = QPushButton("其他 (O)")
+        self.btn_to_other.setToolTip("将选中进程添加到其他类")
+        self.btn_to_other.clicked.connect(lambda: self._classify_selected("other"))
+        
+        self.btn_remove_detected = QPushButton("移除 (Del)")
+        self.btn_remove_detected.setToolTip("从列表中移除选中进程")
+        self.btn_remove_detected.clicked.connect(self._remove_selected_detected)
+        
+        btn_classify_layout.addWidget(self.btn_to_work)
+        btn_classify_layout.addWidget(self.btn_to_game)
+        btn_classify_layout.addWidget(self.btn_to_leisure)
+        btn_classify_layout.addWidget(self.btn_to_other)
+        btn_classify_layout.addStretch()
+        btn_classify_layout.addWidget(self.btn_remove_detected)
+        detected_layout.addLayout(btn_classify_layout)
+        
+        # 刷新按钮
+        btn_refresh_detected = QPushButton("🔄 刷新检测列表")
+        btn_refresh_detected.clicked.connect(self._refresh_detected_apps)
+        detected_layout.addWidget(btn_refresh_detected, alignment=Qt.AlignmentFlag.AlignRight)
+        
+        detected_group.setLayout(detected_layout)
+        apps_layout.addWidget(detected_group)
+        
         # Tab 4 恢复默认按钮
         btn_reset_apps = QPushButton("恢复名单默认")
         btn_reset_apps.setObjectName("TabResetButton")
@@ -825,6 +913,109 @@ class SettingsDialog(QDialog):
         self.sb_sysmon_interval.setValue(DEFAULT_CONFIG["sys_monitor_interval"])
         self.settings_changed.emit()
         self._show_ok("系统监控已恢复为默认值！")
+
+    # === 未分类进程检测列表功能 ===
+    def _refresh_detected_apps(self):
+        """ 刷新检测到的未分类进程列表 """
+        self.lw_detected.clear()
+        
+        # 从数据库获取今日检测到的所有进程
+        try:
+            from core.database import DatabaseManager
+            db = DatabaseManager()
+            top_apps = db.get_today_top_apps(50)
+        except Exception:
+            top_apps = []
+        
+        # 获取当前配置中的分类名单
+        work_set = set(self.config.get("work_apps", []))
+        game_set = set(self.config.get("game_apps", []))
+        leisure_set = set(self.config.get("leisure_apps", []))
+        
+        # 过滤出未分类的进程
+        detected = set()
+        for app in top_apps:
+            name = app.get("process_name", "").strip().lower()
+            if name and name not in work_set and name not in game_set and name not in leisure_set:
+                detected.add(name)
+        
+        # 如果没有数据库数据，显示提示
+        if not detected:
+            item = QListWidgetItem("暂无未分类进程（使用软件后自动检测）")
+            item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.lw_detected.addItem(item)
+            return
+        
+        # 添加到列表
+        for name in sorted(detected):
+            item = QListWidgetItem(name)
+            item.setData(Qt.ItemDataRole.UserRole, name)
+            self.lw_detected.addItem(item)
+    
+    def _on_detected_list_keypress(self, event):
+        """ 处理检测列表的键盘快捷键 """
+        key = event.key()
+        
+        if key == Qt.Key.Key_W:
+            self._classify_selected("work")
+        elif key == Qt.Key.Key_G:
+            self._classify_selected("game")
+        elif key == Qt.Key.Key_L:
+            self._classify_selected("leisure")
+        elif key == Qt.Key.Key_O:
+            self._classify_selected("other")
+        elif key == Qt.Key.Key_Delete:
+            self._remove_selected_detected()
+        else:
+            # 其他按键交给默认处理
+            QListWidget.keyPressEvent(self.lw_detected, event)
+    
+    def _classify_selected(self, category):
+        """ 将选中的进程分类到指定类别 """
+        selected_items = self.lw_detected.selectedItems()
+        if not selected_items:
+            return
+        
+        names = []
+        for item in selected_items:
+            name = item.data(Qt.ItemDataRole.UserRole)
+            if name:
+                names.append(name)
+        
+        if not names:
+            return
+        
+        # 获取当前文本
+        if category == "work":
+            current_text = self.te_work.toPlainText().strip()
+            new_names = ", ".join(names)
+            self.te_work.setPlainText(current_text + ", " + new_names if current_text else new_names)
+        elif category == "game":
+            current_text = self.te_game.toPlainText().strip()
+            new_names = ", ".join(names)
+            self.te_game.setPlainText(current_text + ", " + new_names if current_text else new_names)
+        elif category == "leisure":
+            current_text = self.te_leisure.toPlainText().strip()
+            new_names = ", ".join(names)
+            self.te_leisure.setPlainText(current_text + ", " + new_names if current_text else new_names)
+        elif category == "other":
+            # 其他类不保存到任何列表，只是从检测列表移除
+            pass
+        
+        # 从检测列表移除
+        for item in selected_items:
+            row = self.lw_detected.row(item)
+            self.lw_detected.takeItem(row)
+        
+        # 自动保存
+        self.save_values()
+    
+    def _remove_selected_detected(self):
+        """ 从检测列表中移除选中的进程 """
+        selected_items = self.lw_detected.selectedItems()
+        for item in selected_items:
+            row = self.lw_detected.row(item)
+            self.lw_detected.takeItem(row)
 
     def apply_styles(self):
         """ Apply modern dark stylesheet """
