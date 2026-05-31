@@ -1271,8 +1271,9 @@ class SettingsDialog(QDialog):
             row = self.lw_detected.row(item)
             self.lw_detected.takeItem(row)
         
-        # 自动保存
+        # 自动保存并通知主窗口配置已变更
         self.save_values()
+        self.settings_changed.emit()
     
     def _remove_selected_detected(self):
         """ 从检测列表中移除选中的进程 """
