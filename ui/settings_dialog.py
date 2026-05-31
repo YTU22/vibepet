@@ -1049,27 +1049,86 @@ class SettingsDialog(QDialog):
         btn_classify_layout = QHBoxLayout()
         btn_classify_layout.setSpacing(8)
 
-        # 动态创建分类按钮
+        # 动态创建分类按钮（带颜色区分）
         shortcuts = {"work": "W", "game": "G", "leisure": "L"}
+        btn_colors = {
+            "work": ("#2e7d32", "#388e3c", "#1b5e20"),
+            "game": ("#c62828", "#d32f2f", "#b71c1c"),
+            "leisure": ("#1565c0", "#1976d2", "#0d47a1"),
+        }
         for cat_id, cat_name in categories.items():
             btn_label = cat_name
             if cat_id in shortcuts:
                 btn_label += f" ({shortcuts[cat_id]})"
             btn = QPushButton(btn_label)
             btn.setToolTip(f"将选中进程添加到{cat_name}类")
+            if cat_id in btn_colors:
+                normal, hover, pressed = btn_colors[cat_id]
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: {normal};
+                        color: #ffffff;
+                        border: none;
+                        border-radius: 6px;
+                        padding: 6px 14px;
+                        font-weight: bold;
+                        font-size: 12px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {hover};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {pressed};
+                    }}
+                """)
             btn.clicked.connect(lambda checked=False, cid=cat_id: self._classify_selected(cid))
             btn_classify_layout.addWidget(btn)
 
-        # “其他”按钮与“移除”按钮
+        # "其他"按钮 - 灰色
         btn_to_other = QPushButton("其他 (O)")
         btn_to_other.setToolTip("将选中进程添加到其他类")
+        btn_to_other.setStyleSheet("""
+            QPushButton {
+                background-color: #616161;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #757575;
+            }
+            QPushButton:pressed {
+                background-color: #424242;
+            }
+        """)
         btn_to_other.clicked.connect(lambda: self._classify_selected("other"))
         btn_classify_layout.addWidget(btn_to_other)
 
         btn_classify_layout.addStretch()
 
+        # "移除"按钮 - 棕色
         btn_remove_detected = QPushButton("移除 (Del)")
         btn_remove_detected.setToolTip("从列表中移除选中进程")
+        btn_remove_detected.setStyleSheet("""
+            QPushButton {
+                background-color: #8d6e63;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #a1887f;
+            }
+            QPushButton:pressed {
+                background-color: #6d4c41;
+            }
+        """)
         btn_remove_detected.clicked.connect(self._remove_selected_detected)
         btn_classify_layout.addWidget(btn_remove_detected)
 
