@@ -141,7 +141,7 @@ class DatabaseManager:
             logger.error(f"Error getting weekly data: {e}")
             return []
             
-    def export_all_to_csv(self, file_path):
+    def export_all_to_csv(self, file_path, category_mapping=None):
         """ Export all usage data from database to a CSV file """
         import csv
         
@@ -178,8 +178,12 @@ class DatabaseManager:
                     
                     for row in cursor.fetchall():
                         seconds = row["duration_seconds"]
-                        # 分类列显示中文：工作, 游戏, 其他
-                        category_cn = {"work": "工作", "game": "游戏"}.get(row["category"], "其他")
+                        cat_id = row["category"]
+                        # 分类列显示中文：支持自定义分类名称
+                        if category_mapping and cat_id in category_mapping:
+                            category_cn = category_mapping[cat_id]
+                        else:
+                            category_cn = {"work": "工作", "game": "游戏", "leisure": "休闲"}.get(cat_id, "其他")
                         formatted = format_friendly_duration(seconds)
                         writer.writerow([
                             row["date"],

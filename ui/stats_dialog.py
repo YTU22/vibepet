@@ -17,9 +17,10 @@ from PyQt6.QtCharts import (
 logger = logging.getLogger("vibe_pet")
 
 class StatsDialog(QDialog):
-    def __init__(self, db_manager, parent=None):
+    def __init__(self, db_manager, config_manager=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
+        self.config = config_manager
         
         self.setWindowTitle("VibePet - 软体统计看板")
         self.resize(700, 500)
@@ -129,19 +130,41 @@ class StatsDialog(QDialog):
             
         top_apps = self.db.get_today_top_apps(10)
         
-        bar_set_work = QBarSet("工作 (Work)")
-        bar_set_game = QBarSet("游戏 (Game)")
-        bar_set_leisure = QBarSet("休闲 (Leisure)")
-        bar_set_other = QBarSet("其他 (Other)")
+        # 获取系统及自定义分类映射
+        categories_dict = {
+            "work": "工作",
+            "game": "游戏",
+            "leisure": "休闲"
+        }
+        if hasattr(self, 'config') and self.config:
+            categories_dict = self.config.get("custom_categories", categories_dict)
+            
+        # 动态创建 QBarSet 集合
+        bar_sets = {}
+        colors_map = {
+            "work": QColor("#4ADE80"),   # 绿色
+            "game": QColor("#F87171"),   # 红色
+            "leisure": QColor("#38BDF8"),# 蓝绿色
+            "other": QColor("#FBBF24")   # 黄琥珀色
+        }
+        nice_colors = [
+            "#A78BFA", "#F472B6", "#FB7185", "#2DD4BF", "#F59E0B", "#60A5FA", "#34D399"
+        ]
         
-        # Set high contrast colors: green, red, cyan, amber
-        bar_set_work.setColor(QColor("#4ADE80"))
-        bar_set_game.setColor(QColor("#F87171"))
-        bar_set_leisure.setColor(QColor("#38BDF8"))
-        bar_set_other.setColor(QColor("#FBBF24"))
-        
+        for cat_id, cat_name in categories_dict.items():
+            bar_sets[cat_id] = QBarSet(cat_name)
+            if cat_id in colors_map:
+                bar_sets[cat_id].setColor(colors_map[cat_id])
+            else:
+                color_index = abs(hash(cat_id)) % len(nice_colors)
+                bar_sets[cat_id].setColor(QColor(nice_colors[color_index]))
+                
+        # 兜底添加“其他”分类
+        if "other" not in bar_sets:
+            bar_sets["other"] = QBarSet("其他")
+            bar_sets["other"].setColor(colors_map["other"])
+            
         categories = []
-        
         for app in top_apps:
             # Shorten name if too long
             name = app["process_name"]
@@ -151,35 +174,30 @@ class StatsDialog(QDialog):
             
             # Value in minutes
             minutes = app["duration_seconds"] / 60.0
-            
             cat = app["category"]
-            if cat == "work":
-                bar_set_work.append(minutes)
-                bar_set_game.append(0)
-                bar_set_leisure.append(0)
-                bar_set_other.append(0)
-            elif cat == "game":
-                bar_set_work.append(0)
-                bar_set_game.append(minutes)
-                bar_set_leisure.append(0)
-                bar_set_other.append(0)
-            elif cat == "leisure":
-                bar_set_work.append(0)
-                bar_set_game.append(0)
-                bar_set_leisure.append(minutes)
-                bar_set_other.append(0)
-            else:
-                bar_set_work.append(0)
-                bar_set_game.append(0)
-                bar_set_leisure.append(0)
-                bar_set_other.append(minutes)
-                
+            
+            target_cat = cat if cat in bar_sets else "other"
+            for cat_id, bset in bar_sets.items():
+                if cat_id == target_cat:
+                    bset.append(minutes)
+                else:
+                    bset.append(0)
+                    
         series = QBarSeries()
-        series.append(bar_set_work)
-        series.append(bar_set_game)
-        series.append(bar_set_leisure)
-        series.append(bar_set_other)
-        
+        # 只向 series 中添加包含有效数据的分类集，避免图例展示过多空白分类
+        for cat_id, bset in bar_sets.items():
+            has_data = False
+            for val_idx in range(bset.count()):
+                if bset.at(val_idx) > 0:
+                    has_data = True
+                    break
+            if has_data:
+                series.append(bset)
+                
+        # 如果全部没有数据，或者没有加入任何 series，至少加一个 other 保证不报错
+        if series.count() == 0 and bar_sets:
+            series.append(bar_sets["other"])
+            
         self.bar_chart.addSeries(series)
         
         # X-Axis (Categories)
@@ -211,12 +229,40 @@ class StatsDialog(QDialog):
         """ Fetch categories usage and render pie chart """
         self.pie_chart.removeAllSeries()
         
-        work_sec = self.db.get_today_by_category("work")
-        game_sec = self.db.get_today_by_category("game")
-        leisure_sec = self.db.get_today_by_category("leisure")
-        other_sec = self.db.get_today_by_category("other")
+        # 获取系统及自定义分类映射
+        categories_dict = {
+            "work": "工作",
+            "game": "游戏",
+            "leisure": "休闲"
+        }
+        if hasattr(self, 'config') and self.config:
+            categories_dict = self.config.get("custom_categories", categories_dict)
+            
+        cat_seconds = {}
+        total_sec = 0
         
-        total_sec = work_sec + game_sec + leisure_sec + other_sec
+        colors_map = {
+            "work": QColor("#4ADE80"),   # 绿色
+            "game": QColor("#F87171"),   # 红色
+            "leisure": QColor("#38BDF8"),# 蓝绿色
+            "other": QColor("#FBBF24")   # 黄琥珀色
+        }
+        nice_colors = [
+            "#A78BFA", "#F472B6", "#FB7185", "#2DD4BF", "#F59E0B", "#60A5FA", "#34D399"
+        ]
+        
+        for cat_id in categories_dict.keys():
+            sec = self.db.get_today_by_category(cat_id)
+            if sec > 0:
+                cat_seconds[cat_id] = sec
+                total_sec += sec
+                
+        # 兜底查询“其他”分类时间
+        other_sec = self.db.get_today_by_category("other")
+        if other_sec > 0:
+            cat_seconds["other"] = other_sec
+            total_sec += other_sec
+            
         if total_sec == 0:
             # Empty state
             series = QPieSeries()
@@ -227,26 +273,18 @@ class StatsDialog(QDialog):
             return
             
         series = QPieSeries()
-        
-        # 只添加有数据的分类，避免0值切片导致标签重叠
         slices = []
-        if work_sec > 0:
-            slice_work = series.append(f"工作", work_sec)
-            slice_work.setBrush(QColor("#4ADE80"))
-            slices.append(slice_work)
-        if game_sec > 0:
-            slice_game = series.append(f"游戏", game_sec)
-            slice_game.setBrush(QColor("#F87171"))
-            slices.append(slice_game)
-        if leisure_sec > 0:
-            slice_leisure = series.append(f"休闲", leisure_sec)
-            slice_leisure.setBrush(QColor("#38BDF8"))
-            slices.append(slice_leisure)
-        if other_sec > 0:
-            slice_other = series.append(f"其他", other_sec)
-            slice_other.setBrush(QColor("#FBBF24"))
-            slices.append(slice_other)
         
+        for cat_id, sec in cat_seconds.items():
+            name = categories_dict.get(cat_id, "其他")
+            slice_obj = series.append(name, sec)
+            if cat_id in colors_map:
+                slice_obj.setBrush(colors_map[cat_id])
+            else:
+                color_index = abs(hash(cat_id)) % len(nice_colors)
+                slice_obj.setBrush(QColor(nice_colors[color_index]))
+            slices.append(slice_obj)
+            
         # 如果只有一个分类有数据，稍微分离切片让标签更清晰
         if len(slices) == 1:
             slices[0].setExploded(True)
@@ -259,8 +297,7 @@ class StatsDialog(QDialog):
             # 标签格式: 分类名 时长(占比%)
             pct = s.percentage() * 100
             minutes = s.value() // 60
-            s.setLabel(f"{s.label()} {minutes}分 ({pct:.1f}%)")
-            # 标签放在切片外侧，避免重叠
+            s.setLabel(f"{s.label()} {minutes:.0f}分 ({pct:.1f}%)")
             s.setLabelPosition(QPieSlice.LabelPosition.LabelOutside)
             
         self.pie_chart.addSeries(series)
@@ -279,7 +316,15 @@ class StatsDialog(QDialog):
         filename = f"vibepet_export_{date_str}.csv"
         file_path = os.path.join(desktop_path, filename)
         
-        success = self.db.export_all_to_csv(file_path)
+        categories_dict = {
+            "work": "工作",
+            "game": "游戏",
+            "leisure": "休闲"
+        }
+        if hasattr(self, 'config') and self.config:
+            categories_dict = self.config.get("custom_categories", categories_dict)
+            
+        success = self.db.export_all_to_csv(file_path, categories_dict)
         
         # QMessageBox manually styled to prevent text from being unreadable (Bug 1)
         msg = QMessageBox(None)

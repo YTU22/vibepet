@@ -16,7 +16,7 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -791,7 +791,7 @@ class PetWindow(QWidget):
                 d.activateWindow()
                 return
 
-        dialog = StatsDialog(self.db, None)
+        dialog = StatsDialog(self.db, self.config, None)
         self.active_dialogs.append(dialog)
         dialog.finished.connect(lambda: self.active_dialogs.remove(dialog))
         dialog.show()

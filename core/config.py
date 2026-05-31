@@ -23,6 +23,11 @@ DEFAULT_CONFIG = {
     "work_apps": ["code", "pycharm", "word", "excel", "obsidian", "notion", "vscode", "intellij idea", "clion"],
     "game_apps": ["steam", "yihuan", "genshinimpact", "league of legends", "valorant", "lol", "genshin impact"],
     "leisure_apps": ["chrome", "msedge", "firefox", "netflix", "bilibili", "youtube", "qq", "wechat", "dingtalk"],  # 休闲应用（追剧、社交等）
+    "custom_categories": {
+        "work": "工作",
+        "game": "游戏",
+        "leisure": "休闲"
+    },
     "show_app_bubble": True,
     "show_pet_on_startup": True,      # 启动时是否显示宠物窗口
     "auto_start": False,              # 是否开机自启动
@@ -230,3 +235,20 @@ class ConfigManager:
     def get_bubble_opacity(self):
         """ 获取气泡不透明度 """
         return self.config.get("bubble_opacity", 1.0)
+
+    def get_categories(self):
+        """ 获取所有分类（包含默认与自定义分类），返回 {id: display_name} """
+        return self.config.get("custom_categories", {
+            "work": "工作",
+            "game": "游戏",
+            "leisure": "休闲"
+        })
+
+    def get_category_for_app(self, app_name):
+        """ 获取进程对应的分类 ID """
+        categories = self.get_categories()
+        for cat_id in categories.keys():
+            if app_name in self.config.get(f"{cat_id}_apps", []):
+                return cat_id
+        return "other"
+

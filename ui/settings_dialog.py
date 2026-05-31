@@ -5,14 +5,14 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
     QSlider, QTabWidget, QWidget as QWidgetBase, QListWidget, QListWidgetItem,
-    QScrollArea, QFrame
+    QScrollArea, QFrame, QLineEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QDesktopServices, QKeySequence
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -320,127 +320,28 @@ class SettingsDialog(QDialog):
 
         # === Tab 4: 进程名单 ===
         tab_apps = QWidgetBase()
-        apps_layout = QVBoxLayout(tab_apps)
-        apps_layout.setContentsMargins(15, 15, 15, 15)
-        apps_layout.setSpacing(10)
+        tab_apps_layout = QVBoxLayout(tab_apps)
+        tab_apps_layout.setContentsMargins(0, 0, 0, 0)
 
-        apps_group = QGroupBox("进程名单（换行或逗号分隔）")
-        apps_inner = QVBoxLayout()
-        apps_inner.setSpacing(8)
-
-        apps_inner.addWidget(QLabel("工作类进程名 (Work Apps):"))
-        self.te_work = QTextEdit()
-        self.te_work.setPlaceholderText("例如: code, pycharm, word, excel（换行或逗号分隔）")
-        self.te_work.setMinimumHeight(60)
-        apps_inner.addWidget(self.te_work)
-
-        apps_inner.addWidget(QLabel("游戏类进程名 (Game Apps):"))
-        self.te_game = QTextEdit()
-        self.te_game.setPlaceholderText("例如: steam, genshinimpact, valorant, lol（换行或逗号分隔）")
-        self.te_game.setMinimumHeight(60)
-        apps_inner.addWidget(self.te_game)
-
-        apps_inner.addWidget(QLabel("休闲类进程名 (Leisure Apps):"))
-        self.te_leisure = QTextEdit()
-        self.te_leisure.setPlaceholderText("例如: chrome, netflix, bilibili, qq, wechat（追剧、社交等，换行或逗号分隔）")
-        self.te_leisure.setMinimumHeight(60)
-        apps_inner.addWidget(self.te_leisure)
-
-        apps_group.setLayout(apps_inner)
-        apps_layout.addWidget(apps_group)
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setObjectName("AppsScrollArea")
+        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+        scroll_area.viewport().setStyleSheet("background-color: transparent;")
         
-        # === 未分类进程检测列表 ===
-        detected_group = QGroupBox("检测到但未分类的进程")
-        detected_layout = QVBoxLayout()
-        detected_layout.setSpacing(8)
+        self.scroll_content = QWidgetBase()
+        self.scroll_content.setObjectName("AppsScrollContent")
+        self.scroll_content.setStyleSheet("QWidget#AppsScrollContent { background-color: transparent; }")
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setContentsMargins(15, 15, 15, 15)
+        self.scroll_layout.setSpacing(10)
         
-        # 说明标签
-        detected_info = QLabel("💡 下方列出桌宠检测到但尚未分类的进程。选中后按快捷键快速分类：")
-        detected_info.setWordWrap(True)
-        detected_info.setObjectName("InfoLabel")
-        detected_layout.addWidget(detected_info)
-        
-        # 快捷键说明
-        shortcut_info = QLabel("<b>快捷键：</b> W-办公 | G-游戏 | L-休闲 | O-其他 | Delete-移除")
-        shortcut_info.setWordWrap(True)
-        shortcut_info.setObjectName("InfoLabel")
-        detected_layout.addWidget(shortcut_info)
-        
-        # 列表控件（带滚动条）
-        self.lw_detected = QListWidget()
-        self.lw_detected.setMinimumHeight(120)
-        self.lw_detected.setMaximumHeight(200)
-        self.lw_detected.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.lw_detected.setStyleSheet("""
-            QListWidget {
-                background-color: #2b2b35;
-                color: #e0e0e6;
-                border: 1px solid #42424a;
-                border-radius: 6px;
-                padding: 4px;
-            }
-            QListWidget::item {
-                padding: 4px 8px;
-                border-radius: 3px;
-            }
-            QListWidget::item:selected {
-                background-color: #37474f;
-                color: #81c784;
-            }
-            QListWidget::item:hover {
-                background-color: #353545;
-            }
-        """)
-        # 绑定快捷键
-        self.lw_detected.keyPressEvent = self._on_detected_list_keypress
-        detected_layout.addWidget(self.lw_detected)
-        
-        # 分类按钮行
-        btn_classify_layout = QHBoxLayout()
-        btn_classify_layout.setSpacing(8)
-        
-        self.btn_to_work = QPushButton("办公 (W)")
-        self.btn_to_work.setToolTip("将选中进程添加到办公类")
-        self.btn_to_work.clicked.connect(lambda: self._classify_selected("work"))
-        
-        self.btn_to_game = QPushButton("游戏 (G)")
-        self.btn_to_game.setToolTip("将选中进程添加到游戏类")
-        self.btn_to_game.clicked.connect(lambda: self._classify_selected("game"))
-        
-        self.btn_to_leisure = QPushButton("休闲 (L)")
-        self.btn_to_leisure.setToolTip("将选中进程添加到休闲类")
-        self.btn_to_leisure.clicked.connect(lambda: self._classify_selected("leisure"))
-        
-        self.btn_to_other = QPushButton("其他 (O)")
-        self.btn_to_other.setToolTip("将选中进程添加到其他类")
-        self.btn_to_other.clicked.connect(lambda: self._classify_selected("other"))
-        
-        self.btn_remove_detected = QPushButton("移除 (Del)")
-        self.btn_remove_detected.setToolTip("从列表中移除选中进程")
-        self.btn_remove_detected.clicked.connect(self._remove_selected_detected)
-        
-        btn_classify_layout.addWidget(self.btn_to_work)
-        btn_classify_layout.addWidget(self.btn_to_game)
-        btn_classify_layout.addWidget(self.btn_to_leisure)
-        btn_classify_layout.addWidget(self.btn_to_other)
-        btn_classify_layout.addStretch()
-        btn_classify_layout.addWidget(self.btn_remove_detected)
-        detected_layout.addLayout(btn_classify_layout)
-        
-        # 刷新按钮
-        btn_refresh_detected = QPushButton("🔄 刷新检测列表")
-        btn_refresh_detected.clicked.connect(self._refresh_detected_apps)
-        detected_layout.addWidget(btn_refresh_detected, alignment=Qt.AlignmentFlag.AlignRight)
-        
-        detected_group.setLayout(detected_layout)
-        apps_layout.addWidget(detected_group)
-        
-        # Tab 4 恢复默认按钮
-        btn_reset_apps = QPushButton("恢复名单默认")
-        btn_reset_apps.setObjectName("TabResetButton")
-        btn_reset_apps.clicked.connect(self.reset_apps_tab)
-        apps_layout.addWidget(btn_reset_apps, alignment=Qt.AlignmentFlag.AlignRight)
+        scroll_area.setWidget(self.scroll_content)
+        tab_apps_layout.addWidget(scroll_area)
         self.tabs.addTab(tab_apps, "进程名单")
+        
+        # 动态构建进程名单选项卡内容
+        self.rebuild_apps_tab_content(initial=True)
 
         # === Tab 5: 系统监控 ===
         tab_sysmon = QWidgetBase()
@@ -572,14 +473,12 @@ class SettingsDialog(QDialog):
         self.sb_positive.setValue(thresholds.get("positive_minutes", 5))
         self.sb_fatigue.setValue(thresholds.get("fatigue_minutes", 480))
 
-        work_list = self.config.get("work_apps", [])
-        self.te_work.setPlainText(", ".join(work_list))
-
-        game_list = self.config.get("game_apps", [])
-        self.te_game.setPlainText(", ".join(game_list))
-
-        leisure_list = self.config.get("leisure_apps", [])
-        self.te_leisure.setPlainText(", ".join(leisure_list))
+        # 动态填充各分类文本框内容
+        categories = self.config.get_categories()
+        for cat_id, te in self.category_textedits.items():
+            if cat_id in categories:
+                app_list = self.config.get(f"{cat_id}_apps", [])
+                te.setPlainText(", ".join(app_list))
 
         # 宠物外观设置
         self.slider_size.setValue(self.config.get("pet_size", 200))
@@ -625,25 +524,30 @@ class SettingsDialog(QDialog):
 
     def save_values(self):
         """ Validate and save settings back to config manager """
-        # Process and clean input lists (supports commas and newlines mix)
-        work_text = self.te_work.toPlainText().replace('\n', ',').replace('\r', ',')
-        game_text = self.te_game.toPlainText().replace('\n', ',').replace('\r', ',')
-        leisure_text = self.te_leisure.toPlainText().replace('\n', ',').replace('\r', ',')
+        # 首先将当前所有 textedit 缓存回 config 内存
+        self.cache_current_apps_inputs()
 
-        work_apps = [name.strip().lower() for name in work_text.split(",") if name.strip()]
-        game_apps = [name.strip().lower() for name in game_text.split(",") if name.strip()]
-        leisure_apps = [name.strip().lower() for name in leisure_text.split(",") if name.strip()]
-
-        # Check overlaps
-        overlap = set(work_apps).intersection(set(game_apps))
-        overlap = overlap.union(set(work_apps).intersection(set(leisure_apps)))
-        overlap = overlap.union(set(game_apps).intersection(set(leisure_apps)))
-        if overlap:
+        # 校验各分类的冲突
+        categories = self.config.get_categories()
+        all_apps = {}
+        has_overlap = False
+        overlapping_apps = set()
+        
+        for cat_id in categories.keys():
+            apps = self.config.get(f"{cat_id}_apps", [])
+            for app in apps:
+                if app in all_apps:
+                    overlapping_apps.add(app)
+                    has_overlap = True
+                else:
+                    all_apps[app] = cat_id
+                    
+        if has_overlap:
             # Styled warning message box to prevent dark text on dark background
             msg = QMessageBox(None)
             msg.setIcon(QMessageBox.Icon.Warning)
             msg.setWindowTitle("名单冲突")
-            msg.setText(f"进程 {list(overlap)} 同时存在于多个名单中，请移除重复项。")
+            msg.setText(f"进程 {list(overlapping_apps)} 同时存在于多个名单中，请移除重复项。")
             msg.setStyleSheet("""
                 QMessageBox {
                     background-color: #1e1e24;
@@ -681,9 +585,7 @@ class SettingsDialog(QDialog):
             "fatigue_minutes": self.sb_fatigue.value()
         })
 
-        self.config.set("work_apps", work_apps)
-        self.config.set("game_apps", game_apps)
-        self.config.set("leisure_apps", leisure_apps)
+        # 各分类 apps 在 cache_current_apps_inputs 里已保存到 self.config
 
         # 宠物外观设置
         self.config.set("pet_size", self.slider_size.value())
@@ -884,14 +786,30 @@ class SettingsDialog(QDialog):
         if not self._confirm_reset("进程名单"):
             return
         from core.config import DEFAULT_CONFIG
+        
+        # 恢复默认的 custom_categories，清除所有自定义分类及其 app 名单
+        self.config.set("custom_categories", DEFAULT_CONFIG["custom_categories"].copy())
+        
+        # 只保留 work, game, leisure，并把其他的配置项删掉/重置
         self.config.set("work_apps", DEFAULT_CONFIG["work_apps"].copy())
         self.config.set("game_apps", DEFAULT_CONFIG["game_apps"].copy())
         self.config.set("leisure_apps", DEFAULT_CONFIG["leisure_apps"].copy())
+        
+        # 移除任何其他自定义分类的 app 配置项
+        default_cats = ["work", "game", "leisure"]
+        keys_to_delete = []
+        for k in list(self.config.config.keys()):
+            if k.endswith("_apps") and k[:-5] not in default_cats:
+                keys_to_delete.append(k)
+        for k in keys_to_delete:
+            if k in self.config.config:
+                del self.config.config[k]
+                
         self.config.save_config()
-        self.te_work.setPlainText(", ".join(DEFAULT_CONFIG["work_apps"]))
-        self.te_game.setPlainText(", ".join(DEFAULT_CONFIG["game_apps"]))
-        self.te_leisure.setPlainText(", ".join(DEFAULT_CONFIG["leisure_apps"]))
         self.settings_changed.emit()
+        
+        # 动态重建 UI 并恢复默认值
+        self.rebuild_apps_tab_content(initial=True)
         self._show_ok("进程名单已恢复为默认值！")
 
     def reset_sysmon_tab(self):
@@ -914,9 +832,303 @@ class SettingsDialog(QDialog):
         self.settings_changed.emit()
         self._show_ok("系统监控已恢复为默认值！")
 
+    # === 自定义分类/名单动态渲染辅助函数 ===
+    def cache_current_apps_inputs(self):
+        """ 将当前界面上所有分类输入框的内容临时更新至 config (仅在内存中，不保存到硬盘)，防止刷新 UI 时丢失输入 """
+        if not hasattr(self, 'category_textedits'):
+            return
+        categories = self.config.get_categories()
+        for cat_id, te in self.category_textedits.items():
+            if cat_id not in categories:
+                continue
+            try:
+                # 过滤并提取文本，换行或逗号分隔
+                text = te.toPlainText().replace('\n', ',').replace('\r', ',')
+                apps = [name.strip().lower() for name in text.split(",") if name.strip()]
+                self.config.set(f"{cat_id}_apps", apps)
+            except Exception as e:
+                logger.error(f"Error caching apps inputs for {cat_id}: {e}")
+
+    def rebuild_apps_tab_content(self, initial=False):
+        """ 动态重建进程名单 Tab 中的所有分类表单和检测列表 """
+        # 1. 缓存当前输入的文本值，防止刷新界面丢失
+        if not initial:
+            self.cache_current_apps_inputs()
+
+        # 2. 清空 scroll_layout 中已有的控件
+        while self.scroll_layout.count():
+            item = self.scroll_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        # 3. 添加“新增自定义分类”区块
+        add_cat_group = QGroupBox("新增自定义分类")
+        add_cat_layout = QHBoxLayout()
+        add_cat_layout.setSpacing(8)
+        
+        self.txt_new_cat_name = QLineEdit()
+        self.txt_new_cat_name.setPlaceholderText("输入新分类名称（如：学习、社交、办公）")
+        self.txt_new_cat_name.setStyleSheet("""
+            QLineEdit {
+                background-color: #2b2b35;
+                color: #ffffff;
+                border: 1px solid #455a64;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #81c784;
+            }
+        """)
+        
+        btn_add_cat = QPushButton("添加分类")
+        btn_add_cat.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32;
+                color: #ffffff;
+                padding: 6px 12px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        btn_add_cat.clicked.connect(self.add_custom_category)
+        
+        add_cat_layout.addWidget(self.txt_new_cat_name, stretch=1)
+        add_cat_layout.addWidget(btn_add_cat)
+        add_cat_group.setLayout(add_cat_layout)
+        self.scroll_layout.addWidget(add_cat_group)
+
+        # 4. 添加进程分类配置区块
+        apps_group = QGroupBox("进程配置（换行或逗号分隔）")
+        apps_inner = QVBoxLayout()
+        apps_inner.setSpacing(10)
+
+        self.category_textedits = {}
+        categories = self.config.get_categories()
+
+        for cat_id, cat_name in categories.items():
+            # 为每个分类分配一个水平标题行，以便在右侧放“删除”按钮
+            header_layout = QHBoxLayout()
+            lbl_title = QLabel(f"<b>{cat_name}类进程名</b> ({cat_id}_apps):" if cat_id not in ["work", "game", "leisure"] else f"<b>{cat_name}类进程名</b>:")
+            lbl_title.setStyleSheet("font-size: 13px; color: #81c784;")
+            header_layout.addWidget(lbl_title)
+            header_layout.addStretch()
+
+            # 自定义分类允许删除
+            if cat_id not in ["work", "game", "leisure"]:
+                btn_delete = QPushButton("删除该分类")
+                btn_delete.setStyleSheet("""
+                    QPushButton {
+                        background-color: #c62828;
+                        color: #ffffff;
+                        padding: 2px 8px;
+                        font-size: 11px;
+                        font-weight: normal;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #d32f2f;
+                    }
+                """)
+                btn_delete.clicked.connect(lambda checked=False, cid=cat_id: self.delete_custom_category(cid))
+                header_layout.addWidget(btn_delete)
+
+            apps_inner.addLayout(header_layout)
+
+            te = QTextEdit()
+            te.setPlaceholderText("换行或逗号分隔。例如: app1, app2")
+            te.setMinimumHeight(60)
+            
+            # 从内存/配置中获取当前应用名列表
+            app_list = self.config.get(f"{cat_id}_apps", [])
+            te.setPlainText(", ".join(app_list))
+            
+            apps_inner.addWidget(te)
+            self.category_textedits[cat_id] = te
+
+        apps_group.setLayout(apps_inner)
+        self.scroll_layout.addWidget(apps_group)
+
+        # 5. 添加“未分类进程检测列表”区块
+        detected_group = QGroupBox("检测到但未分类的进程")
+        detected_layout = QVBoxLayout()
+        detected_layout.setSpacing(8)
+
+        detected_info = QLabel("💡 下方列出桌宠检测到但尚未分类的进程。选中后按快捷键或点击分类按钮快速归类：")
+        detected_info.setWordWrap(True)
+        detected_info.setObjectName("InfoLabel")
+        detected_layout.addWidget(detected_info)
+
+        shortcut_info = QLabel("<b>快捷键：</b> W-办公 | G-游戏 | L-休闲 | O-其他 | Delete-移除")
+        shortcut_info.setWordWrap(True)
+        shortcut_info.setObjectName("InfoLabel")
+        detected_layout.addWidget(shortcut_info)
+
+        self.lw_detected = QListWidget()
+        self.lw_detected.setMinimumHeight(150)
+        self.lw_detected.setMaximumHeight(250)
+        self.lw_detected.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.lw_detected.setStyleSheet("""
+            QListWidget {
+                background-color: #2b2b35;
+                color: #e0e0e6;
+                border: 1px solid #42424a;
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 4px 8px;
+                border-radius: 3px;
+            }
+            QListWidget::item:selected {
+                background-color: #37474f;
+                color: #81c784;
+            }
+            QListWidget::item:hover {
+                background-color: #353545;
+            }
+        """)
+        self.lw_detected.keyPressEvent = self._on_detected_list_keypress
+        detected_layout.addWidget(self.lw_detected)
+
+        # 分类动作按钮行
+        btn_classify_layout = QHBoxLayout()
+        btn_classify_layout.setSpacing(8)
+
+        # 动态创建分类按钮
+        shortcuts = {"work": "W", "game": "G", "leisure": "L"}
+        for cat_id, cat_name in categories.items():
+            btn_label = cat_name
+            if cat_id in shortcuts:
+                btn_label += f" ({shortcuts[cat_id]})"
+            btn = QPushButton(btn_label)
+            btn.setToolTip(f"将选中进程添加到{cat_name}类")
+            btn.clicked.connect(lambda checked=False, cid=cat_id: self._classify_selected(cid))
+            btn_classify_layout.addWidget(btn)
+
+        # “其他”按钮与“移除”按钮
+        btn_to_other = QPushButton("其他 (O)")
+        btn_to_other.setToolTip("将选中进程添加到其他类")
+        btn_to_other.clicked.connect(lambda: self._classify_selected("other"))
+        btn_classify_layout.addWidget(btn_to_other)
+
+        btn_classify_layout.addStretch()
+
+        btn_remove_detected = QPushButton("移除 (Del)")
+        btn_remove_detected.setToolTip("从列表中移除选中进程")
+        btn_remove_detected.clicked.connect(self._remove_selected_detected)
+        btn_classify_layout.addWidget(btn_remove_detected)
+
+        detected_layout.addLayout(btn_classify_layout)
+
+        # 刷新列表按钮
+        btn_refresh_detected = QPushButton("🔄 刷新检测列表")
+        btn_refresh_detected.clicked.connect(self._refresh_detected_apps)
+        detected_layout.addWidget(btn_refresh_detected, alignment=Qt.AlignmentFlag.AlignRight)
+
+        detected_group.setLayout(detected_layout)
+        self.scroll_layout.addWidget(detected_group)
+
+        # 6. 恢复默认按钮
+        btn_reset_apps = QPushButton("恢复名单默认")
+        btn_reset_apps.setObjectName("TabResetButton")
+        btn_reset_apps.clicked.connect(self.reset_apps_tab)
+        self.scroll_layout.addWidget(btn_reset_apps, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # 7. 动态刷新未分类列表
+        self._refresh_detected_apps()
+
+    def add_custom_category(self):
+        """ 新增自定义分类 """
+        cat_name = self.txt_new_cat_name.text().strip()
+        if not cat_name:
+            QMessageBox.warning(self, "错误", "分类名称不能为空！")
+            return
+            
+        categories = self.config.get_categories()
+        
+        # 检查重名
+        if cat_name in categories.values():
+            QMessageBox.warning(self, "错误", f"分类【{cat_name}】已存在！")
+            return
+            
+        # 生成唯一 ID
+        import time
+        cat_id = f"custom_{int(time.time())}"
+        
+        # 缓存当前输入，更新 custom_categories 并在内存中初始化新分类
+        self.cache_current_apps_inputs()
+        
+        new_categories = categories.copy()
+        new_categories[cat_id] = cat_name
+        self.config.set("custom_categories", new_categories)
+        self.config.set(f"{cat_id}_apps", [])
+        
+        # 保存设置
+        self.config.save_config()
+        
+        # 重建 UI
+        self.rebuild_apps_tab_content()
+
+    def delete_custom_category(self, cat_id):
+        """ 删除指定的自定义分类 """
+        categories = self.config.get_categories()
+        cat_name = categories.get(cat_id, cat_id)
+        
+        # 确认弹窗
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("确认删除")
+        msg.setText(f"确定要删除自定义分类【{cat_name}】吗？\n删除后该分类下的所有配置进程将被清除。")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e1e24;
+                color: #ffffff;
+                font-family: "Microsoft YaHei", sans-serif;
+            }
+            QLabel {
+                color: #ff8a80;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #37474f;
+                color: #ffffff;
+                border-radius: 4px;
+                padding: 6px 16px;
+            }
+        """)
+        if msg.exec() != QMessageBox.StandardButton.Yes:
+            return
+            
+        # 缓存当前输入（排除要删除的这一个）
+        self.cache_current_apps_inputs()
+        
+        # 更新分类
+        new_categories = categories.copy()
+        if cat_id in new_categories:
+            del new_categories[cat_id]
+        self.config.set("custom_categories", new_categories)
+        
+        # 删除对应的 apps 列表
+        app_key = f"{cat_id}_apps"
+        if app_key in self.config.config:
+            del self.config.config[app_key]
+            
+        # 保存设置
+        self.config.save_config()
+        
+        # 重建 UI
+        self.rebuild_apps_tab_content()
+
     # === 未分类进程检测列表功能 ===
     def _refresh_detected_apps(self):
         """ 刷新检测到的未分类进程列表 """
+        if not hasattr(self, 'lw_detected') or self.lw_detected is None:
+            return
         self.lw_detected.clear()
         
         # 从数据库获取今日检测到的所有进程
@@ -927,16 +1139,17 @@ class SettingsDialog(QDialog):
         except Exception:
             top_apps = []
         
-        # 获取当前配置中的分类名单
-        work_set = set(self.config.get("work_apps", []))
-        game_set = set(self.config.get("game_apps", []))
-        leisure_set = set(self.config.get("leisure_apps", []))
+        # 获取当前配置中的所有分类名单
+        categories = self.config.get_categories()
+        all_categorized_apps = set()
+        for cat_id in categories.keys():
+            all_categorized_apps.update(self.config.get(f"{cat_id}_apps", []))
         
         # 过滤出未分类的进程
         detected = set()
         for app in top_apps:
             name = app.get("process_name", "").strip().lower()
-            if name and name not in work_set and name not in game_set and name not in leisure_set:
+            if name and name not in all_categorized_apps:
                 detected.add(name)
         
         # 如果没有数据库数据，显示提示
@@ -972,6 +1185,8 @@ class SettingsDialog(QDialog):
     
     def _classify_selected(self, category):
         """ 将选中的进程分类到指定类别 """
+        if not hasattr(self, 'lw_detected') or self.lw_detected is None:
+            return
         selected_items = self.lw_detected.selectedItems()
         if not selected_items:
             return
@@ -985,22 +1200,19 @@ class SettingsDialog(QDialog):
         if not names:
             return
         
-        # 获取当前文本
-        if category == "work":
-            current_text = self.te_work.toPlainText().strip()
-            new_names = ", ".join(names)
-            self.te_work.setPlainText(current_text + ", " + new_names if current_text else new_names)
-        elif category == "game":
-            current_text = self.te_game.toPlainText().strip()
-            new_names = ", ".join(names)
-            self.te_game.setPlainText(current_text + ", " + new_names if current_text else new_names)
-        elif category == "leisure":
-            current_text = self.te_leisure.toPlainText().strip()
-            new_names = ", ".join(names)
-            self.te_leisure.setPlainText(current_text + ", " + new_names if current_text else new_names)
-        elif category == "other":
-            # 其他类不保存到任何列表，只是从检测列表移除
+        if category == "other":
+            # 其他类不保存到 any 列表，只是从检测列表移除
             pass
+        elif category in self.category_textedits:
+            # 找到对应的 QTextEdit 并追加内容
+            te = self.category_textedits[category]
+            current_text = te.toPlainText().strip()
+            new_names = ", ".join(names)
+            te.setPlainText(current_text + ", " + new_names if current_text else new_names)
+            
+            # 临时更新到 config 并保存
+            self.cache_current_apps_inputs()
+            self.config.save_config()
         
         # 从检测列表移除
         for item in selected_items:
@@ -1012,6 +1224,8 @@ class SettingsDialog(QDialog):
     
     def _remove_selected_detected(self):
         """ 从检测列表中移除选中的进程 """
+        if not hasattr(self, 'lw_detected') or self.lw_detected is None:
+            return
         selected_items = self.lw_detected.selectedItems()
         for item in selected_items:
             row = self.lw_detected.row(item)
@@ -1036,6 +1250,17 @@ class SettingsDialog(QDialog):
                 border-radius: 6px;
                 background-color: #25252e;
                 top: -1px;
+            }
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollArea > QWidget > QWidget {
+                background-color: transparent;
+            }
+            #AppsScrollArea, #AppsScrollContent {
+                background-color: transparent;
+                background: transparent;
             }
             QTabBar::tab {
                 background-color: #2b2b35;

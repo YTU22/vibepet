@@ -164,14 +164,8 @@ class MonitorThread(QThread):
                 self.current_app = normalized_name
                 
                 # Determine category
-                if self.config.is_work_app(normalized_name):
-                    self.current_category = "work"
-                elif self.config.is_game_app(normalized_name):
-                    self.current_category = "game"
-                elif self.config.is_leisure_app(normalized_name):
-                    self.current_category = "leisure"
-                else:
-                    self.current_category = "other"
+                self.current_category = self.config.get_category_for_app(normalized_name)
+                
                     
                 # 3. Accumulate time in memory cache
                 cache_key = (normalized_name, self.current_category)

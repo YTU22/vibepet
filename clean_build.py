@@ -26,14 +26,34 @@ def clean():
         except Exception as e:
             print(f"警告：删除 build/ 目录失败，该目录可能正在被杀毒软件（如 360）扫描或被其他进程锁定。请关闭杀软或相关进程后重试。错误: {e}")
 
-    # 2. 删除 dist/ 目录
+    # 2. 清理 dist/ 目录下的打包输出文件，但保留数据库、日志和配置文件等
     dist_dir = os.path.join(base, "dist")
     if os.path.exists(dist_dir):
-        try:
-            shutil.rmtree(dist_dir)
-            removed.append("dist/")
-        except Exception as e:
-            print(f"警告：删除 dist/ 目录失败，该目录内的 exe 文件可能已被杀毒软件隔离、删除或锁定。错误: {e}")
+        # 删除文件夹模式输出
+        vp_folder = os.path.join(dist_dir, "VibePet")
+        if os.path.exists(vp_folder):
+            try:
+                shutil.rmtree(vp_folder)
+                removed.append("dist/VibePet/")
+            except Exception as e:
+                print(f"警告：删除 dist/VibePet/ 目录失败。错误: {e}")
+                
+        # 删除单文件 exe
+        vp_exe = os.path.join(dist_dir, "VibePet.exe")
+        if os.path.exists(vp_exe):
+            try:
+                os.remove(vp_exe)
+                removed.append("dist/VibePet.exe")
+            except Exception as e:
+                print(f"警告：删除 dist/VibePet.exe 失败。错误: {e}")
+                
+        # 删除 zip 归档
+        for zip_file in glob.glob(os.path.join(dist_dir, "*.zip")):
+            try:
+                os.remove(zip_file)
+                removed.append(f"dist/{os.path.basename(zip_file)}")
+            except Exception as e:
+                print(f"警告：删除 zip 文件 {os.path.basename(zip_file)} 失败。错误: {e}")
 
     # 3. 删除 PyInstaller 生成的临时 .spec（保留项目自带的 spec 配置文件）
     for spec in glob.glob(os.path.join(base, "*.spec")):
