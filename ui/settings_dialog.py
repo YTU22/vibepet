@@ -409,6 +409,10 @@ class SettingsDialog(QDialog):
         about_inner.addWidget(QLabel(f"<b>版本号:</b> {APP_VERSION}"))
         about_inner.addWidget(QLabel("<b>作者:</b> YTU22"))
         
+        lbl_github = QLabel("<b>GitHub:</b> <a href='https://github.com/YTU22/vibepet' style='color:#81c784;'>github.com/YTU22/vibepet</a>")
+        lbl_github.setOpenExternalLinks(True)
+        about_inner.addWidget(lbl_github)
+        
         about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
         
         # 检测更新按钮
