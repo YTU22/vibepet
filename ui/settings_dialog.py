@@ -1,5 +1,8 @@
 import logging
 import datetime
+import json
+import urllib.request
+import urllib.error
 import webbrowser
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
@@ -404,17 +407,21 @@ class SettingsDialog(QDialog):
 
         about_inner.addWidget(QLabel("<h2 style='color:#81c784;'>VibePet 桌面宠物</h2>"))
         about_inner.addWidget(QLabel(f"<b>版本号:</b> {APP_VERSION}"))
-        about_inner.addWidget(QLabel("<b>作者:</b> 丞客Show"))
-        
-        # 官网链接标签（支持点击打开浏览器）
-        lbl_website = QLabel("<b>官网:</b> <a href='https://vibeharbor.art' style='color:#81c784;'>vibeharbor.art</a>")
-        lbl_website.setOpenExternalLinks(True)
-        about_inner.addWidget(lbl_website)
+        about_inner.addWidget(QLabel("<b>作者:</b> YTU22"))
         
         about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
         
+        # 检测更新按钮
+        about_inner.addSpacing(15)
+        self.btn_check_update = QPushButton("🔍 检测更新")
+        self.btn_check_update.clicked.connect(self._check_for_update)
+        about_inner.addWidget(self.btn_check_update)
+        self.lbl_update_status = QLabel("")
+        self.lbl_update_status.setWordWrap(True)
+        about_inner.addWidget(self.lbl_update_status)
+        
         # 开机自启动选项
-        about_inner.addSpacing(20)
+        about_inner.addSpacing(10)
         self.cb_auto_start = QCheckBox("开机自动启动 VibePet")
         self.cb_auto_start.setChecked(is_auto_start_enabled())
         self.cb_auto_start.stateChanged.connect(self._on_auto_start_changed)
@@ -456,6 +463,47 @@ class SettingsDialog(QDialog):
         if success:
             self.config.set("auto_start", enabled)
             logger.info(f"Auto-start changed to: {enabled}")
+
+    def _check_for_update(self):
+        """ 检测 GitHub Releases 是否有新版本 """
+        self.lbl_update_status.setText("正在检测更新...")
+        self.btn_check_update.setEnabled(False)
+        
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/YTU22/vibepet/releases/latest",
+                headers={"User-Agent": "VibePet-UpdateChecker"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "").lstrip("v")
+            if not latest:
+                self.lbl_update_status.setText("<span style='color:#ff9800;'>无法获取最新版本信息</span>")
+                return
+            
+            def parse_ver(v):
+                try:
+                    return tuple(int(x) for x in v.split(".")[:3])
+                except Exception:
+                    return (0, 0, 0)
+            
+            if parse_ver(latest) > parse_ver(APP_VERSION):
+                url = data.get("html_url", "https://github.com/YTU22/vibepet/releases")
+                self.lbl_update_status.setText(
+                    f"<span style='color:#81c784;'>发现新版本 v{latest}！</span><br>"
+                    f"<a href='{url}' style='color:#81c784;'>点击前往下载</a>"
+                )
+                self.lbl_update_status.setOpenExternalLinks(True)
+            else:
+                self.lbl_update_status.setText("<span style='color:#81c784;'>✓ 当前已是最新版本</span>")
+        except urllib.error.URLError as e:
+            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>网络连接失败，请稍后重试</span>")
+            logger.warning(f"Update check failed: {e}")
+        except Exception as e:
+            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>检测失败: {e}</span>")
+            logger.warning(f"Update check error: {e}")
+        finally:
+            self.btn_check_update.setEnabled(True)
 
     def load_values(self):
         """ Read config manager and populate form elements """

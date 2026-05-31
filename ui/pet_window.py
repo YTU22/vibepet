@@ -1,6 +1,9 @@
 import os
 import logging
 import math
+import json
+import urllib.request
+import urllib.error
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QMenu, QMessageBox, QGraphicsOpacityEffect
 )
@@ -86,6 +89,9 @@ class PetWindow(QWidget):
         self._sys_monitor_data = {}  # 缓存最新监控数据
         self._sys_monitor_thread = None
         self._apply_sys_monitor_state()
+
+        # 启动时检测更新（延迟5秒，避免影响启动速度）
+        QTimer.singleShot(5000, self._check_for_updates)
 
         logger.info("Pet Window initialized.")
 
@@ -956,3 +962,32 @@ class PetWindow(QWidget):
         # We handle quit explicitly through quit_application
         self.tray.hide()
         event.accept()
+
+    def _check_for_updates(self):
+        """ 启动时检测 GitHub Releases 是否有新版本 """
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/YTU22/vibepet/releases/latest",
+                headers={"User-Agent": "VibePet-UpdateChecker"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "").lstrip("v")
+            if not latest:
+                return
+            
+            def parse_ver(v):
+                try:
+                    return tuple(int(x) for x in v.split(".")[:3])
+                except Exception:
+                    return (0, 0, 0)
+            
+            if parse_ver(latest) > parse_ver(APP_VERSION):
+                url = data.get("html_url", "https://github.com/YTU22/vibepet/releases")
+                self.show_bubble_message(f"🎉 发现新版本 v{latest}！\n点击前往下载更新")
+                # 保存URL供点击使用
+                self._update_url = url
+            else:
+                logger.info(f"Current version {APP_VERSION} is up to date.")
+        except Exception as e:
+            logger.warning(f"Auto update check failed: {e}")
