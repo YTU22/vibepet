@@ -15,7 +15,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 logger = logging.getLogger("vibe_pet")
 
