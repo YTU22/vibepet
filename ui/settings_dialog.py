@@ -18,7 +18,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.0.7.1"
+APP_VERSION = "1.0.8"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -767,9 +767,13 @@ class SettingsDialog(QDialog):
             
             def parse_ver(v):
                 try:
-                    return tuple(int(x) for x in v.split(".")[:3])
+                    parts = [int(x) for x in v.split(".")]
+                    # 补齐到4位再比较，支持 x.y.z.w 格式
+                    while len(parts) < 4:
+                        parts.append(0)
+                    return tuple(parts[:4])
                 except Exception:
-                    return (0, 0, 0)
+                    return (0, 0, 0, 0)
             
             if parse_ver(latest) > parse_ver(APP_VERSION):
                 self._latest_version = latest
