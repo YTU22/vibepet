@@ -153,6 +153,7 @@ class SettingsDialog(QDialog):
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.config = config_manager
+        self._download_url = ""
         
         # 安装事件过滤器，阻止滚轮事件改变 SpinBox 值（防止滑动时误触）
         self.installEventFilter(self)
@@ -761,6 +762,11 @@ class SettingsDialog(QDialog):
             with urllib.request.urlopen(req, timeout=8) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             latest = data.get("tag_name", "").lstrip("v")
+            self._download_url = ""
+            assets = data.get("assets", [])
+            if assets and isinstance(assets, list):
+                self._download_url = assets[0].get("browser_download_url", "")
+            
             if not latest:
                 self.lbl_update_status.setText("<span style='color:#ff9800;'>无法获取最新版本信息</span>")
                 return
@@ -806,35 +812,72 @@ class SettingsDialog(QDialog):
             progress = pyqtSignal(int)
             finished = pyqtSignal(bool, str)
             
+            def __init__(self, download_url="", parent=None):
+                super().__init__(parent)
+                self.download_url = download_url
+                
             def run(self):
                 try:
                     app_dir = get_app_dir()
                     temp_zip = os.path.join(app_dir, "VibePet_update.zip")
                     
-                    req = urllib.request.Request(
-                        "https://vibeharbor.art/api/github/vibepet/download-latest",
-                        headers={"User-Agent": "VibePet-Updater"}
-                    )
-                    with urllib.request.urlopen(req, timeout=120) as resp:
-                        total_size = int(resp.headers.get('content-length', 0))
-                        downloaded = 0
-                        chunk_size = 8192
-                        
-                        with open(temp_zip, 'wb') as f:
-                            while True:
-                                chunk = resp.read(chunk_size)
-                                if not chunk:
-                                    break
-                                f.write(chunk)
-                                downloaded += len(chunk)
-                                if total_size > 0:
-                                    self.progress.emit(int(downloaded * 100 / total_size))
+                    # 按照优先级排序的下载源列表
+                    urls_to_try = []
+                    if self.download_url:
+                        # 1. 国内加速代理 (CN Speedup Proxy) - 对国内用户极快且免梯子
+                        urls_to_try.append(("国内加速代理", f"https://ghproxy.net/{self.download_url}"))
+                        # 2. 直连 GitHub - 针对有梯子/VPN 的用户
+                        urls_to_try.append(("直连 GitHub", self.download_url))
+                    # 3. 官方流式代理服务器 - 终极备用 (流式传输，在国外节点慢但稳定)
+                    urls_to_try.append(("官方备用服务器", "https://vibeharbor.art/api/github/vibepet/download-latest"))
                     
-                    self.finished.emit(True, temp_zip)
+                    last_error = ""
+                    success = False
+                    
+                    for name, url in urls_to_try:
+                        logger.info(f"Trying to download update from {name}: {url}")
+                        try:
+                            # 必须使用主流浏览器 User-Agent 绕过某些防护墙与 Cloudflare 拦截
+                            req = urllib.request.Request(
+                                url,
+                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                            )
+                            with urllib.request.urlopen(req, timeout=45) as resp:
+                                total_size = int(resp.headers.get('content-length', 0))
+                                downloaded = 0
+                                chunk_size = 8192
+                                
+                                with open(temp_zip, 'wb') as f:
+                                    while True:
+                                        chunk = resp.read(chunk_size)
+                                        if not chunk:
+                                            break
+                                        f.write(chunk)
+                                        downloaded += len(chunk)
+                                        if total_size > 0:
+                                            self.progress.emit(int(downloaded * 100 / total_size))
+                            
+                            success = True
+                            logger.info(f"Successfully downloaded update from {name}")
+                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to download update from {name}: {e}")
+                            last_error = str(e)
+                            # 清理下载失败的临时残留文件
+                            if os.path.exists(temp_zip):
+                                try:
+                                    os.remove(temp_zip)
+                                except Exception:
+                                    pass
+                    
+                    if success:
+                        self.finished.emit(True, temp_zip)
+                    else:
+                        self.finished.emit(False, last_error)
                 except Exception as e:
                     self.finished.emit(False, str(e))
         
-        self._dl_thread = DownloadThread(self)
+        self._dl_thread = DownloadThread(self._download_url, self)
         self._dl_thread.progress.connect(self.progress_update.setValue)
         self._dl_thread.finished.connect(self._on_download_finished)
         self._dl_thread.start()
