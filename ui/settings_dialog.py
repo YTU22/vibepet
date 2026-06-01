@@ -18,7 +18,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.0.8.5"
+APP_VERSION = "1.0.9"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -1496,6 +1496,16 @@ class SettingsDialog(QDialog):
                 QPushButton:pressed {{
                     background-color: {pressed};
                 }}
+                QToolTip {{
+                    background-color: #ffffff;
+                    color: #1a1a24;
+                    border: 2px solid {normal};
+                    border-radius: 6px;
+                    padding: 6px 12px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                    font-size: 13px;
+                    font-weight: bold;
+                }}
             """)
             btn.clicked.connect(lambda checked=False, cid=cat_id: self._classify_selected(cid))
             btn_classify_layout.addWidget(btn)
@@ -1518,6 +1528,16 @@ class SettingsDialog(QDialog):
             }
             QPushButton:pressed {
                 background-color: #424242;
+            }
+            QToolTip {
+                background-color: #ffffff;
+                color: #1a1a24;
+                border: 2px solid #616161;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-family: "Microsoft YaHei", sans-serif;
+                font-size: 13px;
+                font-weight: bold;
             }
         """)
         btn_to_other.clicked.connect(lambda: self._classify_selected("other"))
@@ -1543,6 +1563,16 @@ class SettingsDialog(QDialog):
             }
             QPushButton:pressed {
                 background-color: #6d4c41;
+            }
+            QToolTip {
+                background-color: #ffffff;
+                color: #1a1a24;
+                border: 2px solid #8d6e63;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-family: "Microsoft YaHei", sans-serif;
+                font-size: 13px;
+                font-weight: bold;
             }
         """)
         btn_remove_detected.clicked.connect(self._remove_selected_detected)
@@ -2062,12 +2092,14 @@ class SettingsDialog(QDialog):
                     font-size: 11px;
                 }
                 QToolTip {
-                    background-color: #2b2b35;
-                    color: #e0e0e6;
-                    border: 1px solid #455a64;
-                    border-radius: 4px;
+                    background-color: #ffffff;
+                    color: #1a1a24;
+                    border: 2px solid #2e7d32;
+                    border-radius: 6px;
+                    padding: 6px 12px;
                     font-family: "Microsoft YaHei", sans-serif;
-                    font-size: 11px;
+                    font-size: 13px;
+                    font-weight: bold;
                 }
                 QScrollBar:vertical {
                     border: none;
