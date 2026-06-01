@@ -17,7 +17,18 @@ def resource_path(relative_path):
 def get_app_dir():
     """ Get the directory where application writable data should be stored """
     if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
+        exe_dir = os.path.dirname(sys.executable)
+        # Portable mode: if config.json already exists in the exe directory, write configuration and data locally.
+        if os.path.exists(os.path.join(exe_dir, "config.json")):
+            return exe_dir
+        
+        # Default: write configuration and database to AppData\Roaming\VibePet to avoid cluttering Desktop/Downloads.
+        appdata_dir = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "VibePet")
+        try:
+            os.makedirs(appdata_dir, exist_ok=True)
+            return appdata_dir
+        except Exception:
+            return exe_dir
     else:
         # Resolve path relative to the directory of main.py which is parent of utils/
         return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

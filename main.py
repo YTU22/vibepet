@@ -30,7 +30,7 @@ import logging
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QLockFile
 
-from utils.helpers import get_app_dir, create_desktop_shortcut, set_auto_start
+from utils.helpers import get_app_dir, create_desktop_shortcut, set_auto_start, resource_path
 
 # Setup Logging first so other modules can use it
 log_path = os.path.join(get_app_dir(), "vibe_pet.log")
@@ -92,7 +92,18 @@ def main():
         if config_mgr.get("first_run", True):
             try:
                 exe_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
-                icon_path = os.path.join(get_app_dir(), "assets", "icon.png")
+                
+                # 为确保桌面快捷方式图标不失效，我们把 exe 内置的高清 icon 复制到 AppData 目录下作为持久存储
+                app_assets_dir = os.path.join(get_app_dir(), "assets")
+                os.makedirs(app_assets_dir, exist_ok=True)
+                icon_path = os.path.join(app_assets_dir, "icon.png")
+                if not os.path.exists(icon_path):
+                    try:
+                        import shutil
+                        shutil.copy2(resource_path("assets/icon.png"), icon_path)
+                    except Exception:
+                        pass
+                
                 if create_desktop_shortcut(exe_path, "VibePet", icon_path):
                     config_mgr.set("first_run", False)
                     logger.info("Desktop shortcut created successfully.")

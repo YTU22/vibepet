@@ -931,8 +931,8 @@ class SettingsDialog(QDialog):
         import sys
         import os
         
-        app_dir = get_app_dir()
         current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
+        exe_dir = os.path.dirname(current_exe)
         
         if getattr(sys, 'frozen', False):
             exe_name = os.path.basename(current_exe)
@@ -940,7 +940,7 @@ class SettingsDialog(QDialog):
             # PowerShell 命令：
             # 1. 寻找正在运行的 VibePet 进程并强制结束它（防止用户未完全关闭或多开）
             # 2. 等待 1 秒确保释放
-            # 3. 将新下载的 zip 包解压并强行覆盖到当前目录
+            # 3. 将新下载的 zip 包解压并强行覆盖到可执行文件所在目录 (exe_dir)
             # 4. 删除 zip 临时文件
             # 5. 启动更新后的 VibePet.exe
             # 采用 -WindowStyle Hidden 隐藏 PowerShell 黑窗
@@ -948,9 +948,9 @@ class SettingsDialog(QDialog):
                 f'Start-Sleep -Seconds 1; '
                 f'$proc = Get-Process -Name "{exe_name.replace(".exe", "")}" -ErrorAction SilentlyContinue; '
                 f'if ($proc) {{ $proc | Stop-Process -Force; Start-Sleep -Seconds 1 }}; '
-                f'Expand-Archive -Path "{temp_zip}" -DestinationPath "{app_dir}" -Force; '
+                f'Expand-Archive -Path "{temp_zip}" -DestinationPath "{exe_dir}" -Force; '
                 f'Remove-Item -Path "{temp_zip}" -Force; '
-                f'Start-Process -FilePath "{current_exe}" -WorkingDirectory "{app_dir}"'
+                f'Start-Process -FilePath "{current_exe}" -WorkingDirectory "{exe_dir}"'
             )
             
             try:
@@ -969,7 +969,7 @@ class SettingsDialog(QDialog):
             try:
                 import zipfile
                 with zipfile.ZipFile(temp_zip, 'r') as zf:
-                    zf.extractall(app_dir)
+                    zf.extractall(exe_dir)
                 os.remove(temp_zip)
                 
                 msg = QMessageBox(self)
