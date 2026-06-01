@@ -18,7 +18,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.8.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -884,36 +884,55 @@ class SettingsDialog(QDialog):
             self._run_updater_and_exit(current_exe, temp_exe)
     
     def _run_updater_and_exit(self, old_exe, new_exe):
-        """ 创建批处理更新器，启动后退出当前程序 """
+        """ 创建独立更新器进程，用 move 命令替换 exe（避免文件锁定和 SmartScreen） """
         app_dir = get_app_dir()
-        bat_path = os.path.join(app_dir, "vibepet_update.bat")
         
-        # 使用 PowerShell 隐藏窗口执行更新，用户看不到命令行
+        # 策略：
+        # 1. 把旧 exe 重命名为 .old（解除锁定）
+        # 2. 把新 exe move 到原位置（move 比 copy 更不容易触发 SmartScreen）
+        # 3. 启动新 exe
+        # 4. 删除 .old 文件和临时脚本
+        
         ps_script = f'''
 $oldExe = '{old_exe}'
 $newExe = '{new_exe}'
-$appName = 'VibePet.exe'
+$oldBackup = '{old_exe}.old'
 
-# 等待原进程退出（最多等 30 秒）
+# 等待原进程完全退出（最多等 30 秒）
 for ($i = 0; $i -lt 30; $i++) {{
-    $proc = Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' -or $_.Path -eq $oldExe }}
+    $proc = Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' -and $_.Path -eq $oldExe }}
     if (-not $proc) {{ break }}
     Start-Sleep -Seconds 1
 }}
 
-# 强制结束残留进程
+# 强制结束所有 VibePet 进程（确保文件句柄释放）
 Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' }} | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 3
 
-# 替换文件
+# 替换策略：重命名旧文件 → move 新文件 → 启动 → 清理
 try {{
-    Copy-Item -Path $newExe -Destination $oldExe -Force
-    # 删除临时文件
-    Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
+    # 如果存在旧备份，先删除
+    if (Test-Path $oldBackup) {{
+        Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
+    }}
+    
+    # 把旧 exe 重命名为 .old（这样原位置就空了，解除文件锁定）
+    Rename-Item -Path $oldExe -NewName $oldBackup -Force -ErrorAction Stop
+    
+    # 把新 exe move 到原位置（move 不会触发 SmartScreen 重新扫描）
+    Move-Item -Path $newExe -Destination $oldExe -Force -ErrorAction Stop
+    
     # 启动新版本
     Start-Process -FilePath $oldExe
+    
+    # 延迟后删除备份文件（给用户时间看到程序启动成功）
+    Start-Sleep -Seconds 5
+    Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
 }} catch {{
-    # 静默失败，不弹窗打扰用户
+    # 如果 move 失败，尝试恢复旧版本
+    if ((Test-Path $oldBackup) -and -not (Test-Path $oldExe)) {{
+        Rename-Item -Path $oldBackup -NewName $oldExe -Force -ErrorAction SilentlyContinue
+    }}
 }}
 
 # 删除自身
@@ -933,8 +952,8 @@ Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             
-            # 延迟一点再退出，让批处理有时间启动
-            QTimer.singleShot(500, self._quit_for_update)
+            # 延迟后退出当前程序
+            QTimer.singleShot(800, self._quit_for_update)
         except Exception as e:
             logger.error(f"Failed to create updater: {e}")
             self.lbl_update_status.setText(f"<span style='color:#ff9800;'>更新失败: {e}</span>")
