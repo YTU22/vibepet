@@ -3,9 +3,10 @@ import datetime
 import logging
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTabWidget, 
-    QWidget, QMessageBox, QLabel
+    QWidget, QMessageBox, QLabel, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QStackedWidget
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush, QPen, QPainter, QIcon, QPixmap
 
 from utils.helpers import resource_path
@@ -17,12 +18,15 @@ from PyQt6.QtCharts import (
 logger = logging.getLogger("vibe_pet")
 
 class StatsDialog(QDialog):
+    theme_changed = pyqtSignal()
+
     def __init__(self, db_manager, config_manager=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
         self.config = config_manager
+        self.theme_mode = self.config.get("theme_mode", "dark") if self.config else "dark"
         
-        self.setWindowTitle("VibePet - 软体统计看板")
+        self.setWindowTitle("统计看板")
         self.resize(700, 500)
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
         
@@ -47,38 +51,85 @@ class StatsDialog(QDialog):
         now = datetime.datetime.now()
         self.lbl_time.setText(now.strftime("%Y-%m-%d %H:%M:%S"))
 
+    def toggle_theme(self):
+        """ 切换明亮模式/暗黑模式 """
+        if self.theme_mode == "dark":
+            self.theme_mode = "light"
+            self.btn_theme.setText("暗黑模式")
+        else:
+            self.theme_mode = "dark"
+            self.btn_theme.setText("明亮模式")
+        if self.config:
+            self.config.set("theme_mode", self.theme_mode)
+            self.config.save_config()
+        self.apply_styles()
+        self.refresh_data()
+        self.theme_changed.emit()
+
     def setup_ui(self):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
         
-        # 顶部标题 + 时间
+        # 顶部标题 + 时间 + 主题切换
         top_layout = QHBoxLayout()
-        title_label = QLabel("VibePet 软体统计看板")
+        title_label = QLabel("统计看板")
         title_label.setObjectName("StatsTitle")
         top_layout.addWidget(title_label)
         top_layout.addStretch()
+        
         self.lbl_time = QLabel()
         self.lbl_time.setObjectName("TimeLabel")
         self.lbl_time.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         top_layout.addWidget(self.lbl_time)
+        
+        self.btn_theme = QPushButton("暗黑模式" if self.theme_mode == "light" else "明亮模式")
+        self.btn_theme.setObjectName("BtnTheme")
+        self.btn_theme.clicked.connect(self.toggle_theme)
+        top_layout.addWidget(self.btn_theme)
+        
         main_layout.addLayout(top_layout)
         
         # Tabs for charts
         self.tab_widget = QTabWidget()
         
-        # Tab 1: Bar Chart (Top 10 Apps)
+        # Tab 1: Bar Chart / List View (Top 10 Apps / All Apps)
         self.tab_bar = QWidget()
         bar_layout = QVBoxLayout(self.tab_bar)
         bar_layout.setContentsMargins(5, 5, 5, 5)
         
+        self.bar_stack = QStackedWidget()
+        
+        # Page 0: Chart View
         self.bar_chart = QChart()
         self.bar_chart.setTitle("今日使用时长 Top 10 应用 (单位：分钟)")
         self.bar_chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
         
         self.bar_view = QChartView(self.bar_chart)
         self.bar_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        bar_layout.addWidget(self.bar_view)
+        self.bar_stack.addWidget(self.bar_view)
+        
+        # Page 1: Table View for expanded view
+        self.app_table = QTableWidget()
+        self.app_table.setColumnCount(4)
+        self.app_table.setHorizontalHeaderLabels(["排名", "应用名称", "所属分类", "今日时长"])
+        self.app_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.app_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.app_table.setColumnWidth(0, 60)
+        self.app_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.app_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.app_table.setAlternatingRowColors(True)
+        self.app_table.verticalHeader().setVisible(False)
+        self.bar_stack.addWidget(self.app_table)
+        
+        bar_layout.addWidget(self.bar_stack)
+        
+        # 展开/折叠显示非前十个的按钮
+        self.btn_expand = QPushButton("展开全部应用")
+        self.btn_expand.setCheckable(True)
+        self.btn_expand.setObjectName("BtnExpand")
+        self.btn_expand.clicked.connect(self.toggle_expand_bar_chart)
+        bar_layout.addWidget(self.btn_expand)
         
         self.tab_widget.addTab(self.tab_bar, "今日排行")
         
@@ -86,6 +137,11 @@ class StatsDialog(QDialog):
         self.tab_pie = QWidget()
         pie_layout = QVBoxLayout(self.tab_pie)
         pie_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.lbl_pie_total = QLabel("今日已监控软件总时长: --")
+        self.lbl_pie_total.setObjectName("PieTotalLabel")
+        self.lbl_pie_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pie_layout.addWidget(self.lbl_pie_total)
         
         self.pie_chart = QChart()
         self.pie_chart.setTitle("今日软件使用分类比例")
@@ -121,109 +177,207 @@ class StatsDialog(QDialog):
         self.update_pie_chart()
 
     def update_bar_chart(self):
-        """ Fetch top 10 apps and render bar chart """
-        self.bar_chart.removeAllSeries()
+        """ Fetch top apps and render bar/table chart """
+        is_expanded = hasattr(self, 'btn_expand') and self.btn_expand.isChecked()
+        limit = 100 if is_expanded else 10
+        top_apps = self.db.get_today_top_apps(limit)
+        self.current_top_apps = top_apps
         
-        # Clear existing axes
-        for axis in self.bar_chart.axes():
-            self.bar_chart.removeAxis(axis)
+        # Determine theme colors
+        is_dark = (self.theme_mode == "dark")
+        bg_color = QColor("#2b2b35") if is_dark else QColor("#ffffff")
+        text_color = QColor("#ffffff") if is_dark else QColor("#333333")
+        label_color = QColor("#cfd8dc") if is_dark else QColor("#555555")
+        
+        if is_expanded:
+            self.bar_stack.setCurrentIndex(1)  # Table view
+            self.btn_expand.setText("返回图表排行")
+            # Populate table
+            self.app_table.setRowCount(len(top_apps))
             
-        top_apps = self.db.get_today_top_apps(10)
-        
-        # 获取系统及自定义分类映射
-        categories_dict = {
-            "work": "工作",
-            "game": "游戏",
-            "leisure": "休闲"
-        }
-        if hasattr(self, 'config') and self.config:
-            categories_dict = self.config.get("custom_categories", categories_dict)
-            
-        # 动态创建 QBarSet 集合
-        bar_sets = {}
-        colors_map = {
-            "work": QColor("#4ADE80"),   # 绿色
-            "game": QColor("#F87171"),   # 红色
-            "leisure": QColor("#38BDF8"),# 蓝绿色
-            "other": QColor("#FBBF24")   # 黄琥珀色
-        }
-        nice_colors = [
-            "#A78BFA", "#F472B6", "#FB7185", "#2DD4BF", "#F59E0B", "#60A5FA", "#34D399"
-        ]
-        
-        for cat_id, cat_name in categories_dict.items():
-            bar_sets[cat_id] = QBarSet(cat_name)
-            if cat_id in colors_map:
-                bar_sets[cat_id].setColor(colors_map[cat_id])
-            else:
-                color_index = abs(hash(cat_id)) % len(nice_colors)
-                bar_sets[cat_id].setColor(QColor(nice_colors[color_index]))
+            categories_dict = {
+                "work": "工作",
+                "game": "游戏",
+                "leisure": "休闲"
+            }
+            if hasattr(self, 'config') and self.config:
+                categories_dict = self.config.get("custom_categories", categories_dict)
                 
-        # 兜底添加“其他”分类
-        if "other" not in bar_sets:
-            bar_sets["other"] = QBarSet("其他")
-            bar_sets["other"].setColor(colors_map["other"])
+            for idx, app in enumerate(top_apps):
+                rank_item = QTableWidgetItem(str(idx + 1))
+                rank_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                name_item = QTableWidgetItem(app["process_name"])
+                
+                cat_id = app["category"]
+                cat_name = categories_dict.get(cat_id, "其他")
+                cat_item = QTableWidgetItem(cat_name)
+                cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                sec = app["duration_seconds"]
+                hours = sec // 3600
+                mins = (sec % 3600) // 60
+                secs = sec % 60
+                duration_str = ""
+                if hours > 0:
+                    duration_str += f"{hours}小时"
+                if mins > 0 or hours > 0:
+                    duration_str += f"{mins}分钟"
+                duration_str += f"{secs}秒"
+                if not duration_str:
+                    duration_str = "0秒"
+                time_item = QTableWidgetItem(duration_str)
+                time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                # Make items read-only and look styled
+                for item in (rank_item, name_item, cat_item, time_item):
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if not is_dark:
+                        item.setForeground(QBrush(QColor("#333333")))
+                    else:
+                        item.setForeground(QBrush(QColor("#e0e0e6")))
+                
+                self.app_table.setItem(idx, 0, rank_item)
+                self.app_table.setItem(idx, 1, name_item)
+                self.app_table.setItem(idx, 2, cat_item)
+                self.app_table.setItem(idx, 3, time_item)
+        else:
+            self.bar_stack.setCurrentIndex(0)  # Chart view
+            self.btn_expand.setText("展开全部应用")
             
-        categories = []
-        for app in top_apps:
-            # Shorten name if too long
-            name = app["process_name"]
-            if len(name) > 12:
-                name = name[:10] + ".."
-            categories.append(name)
+            self.bar_chart.removeAllSeries()
             
-            # Value in minutes
-            minutes = app["duration_seconds"] / 60.0
-            cat = app["category"]
+            # Clear existing axes
+            for axis in self.bar_chart.axes():
+                self.bar_chart.removeAxis(axis)
+                
+            self.bar_chart.setTitle("今日使用时长 Top 10 应用 (单位：分钟)")
             
-            target_cat = cat if cat in bar_sets else "other"
-            for cat_id, bset in bar_sets.items():
-                if cat_id == target_cat:
-                    bset.append(minutes)
+            # 获取系统及自定义分类映射
+            categories_dict = {
+                "work": "工作",
+                "game": "游戏",
+                "leisure": "休闲"
+            }
+            if hasattr(self, 'config') and self.config:
+                categories_dict = self.config.get("custom_categories", categories_dict)
+                
+            # 动态创建 QBarSet 集合
+            bar_sets = {}
+            colors_map = {
+                "work": QColor("#4ADE80"),   # 绿色
+                "game": QColor("#F87171"),   # 红色
+                "leisure": QColor("#38BDF8"),# 蓝绿色
+                "other": QColor("#FBBF24")   # 黄琥珀色
+            }
+            nice_colors = [
+                "#A78BFA", "#F472B6", "#FB7185", "#2DD4BF", "#F59E0B", "#60A5FA", "#34D399"
+            ]
+            
+            for cat_id, cat_name in categories_dict.items():
+                bar_sets[cat_id] = QBarSet(cat_name)
+                if cat_id in colors_map:
+                    bar_sets[cat_id].setColor(colors_map[cat_id])
                 else:
-                    bset.append(0)
+                    color_index = abs(hash(cat_id)) % len(nice_colors)
+                    bar_sets[cat_id].setColor(QColor(nice_colors[color_index]))
                     
-        series = QBarSeries()
-        # 只向 series 中添加包含有效数据的分类集，避免图例展示过多空白分类
-        for cat_id, bset in bar_sets.items():
-            has_data = False
-            for val_idx in range(bset.count()):
-                if bset.at(val_idx) > 0:
-                    has_data = True
-                    break
-            if has_data:
-                series.append(bset)
+            # 兜底添加“其他”分类
+            if "other" not in bar_sets:
+                bar_sets["other"] = QBarSet("其他")
+                bar_sets["other"].setColor(colors_map["other"])
                 
-        # 如果全部没有数据，或者没有加入任何 series，至少加一个 other 保证不报错
-        if series.count() == 0 and bar_sets:
-            series.append(bar_sets["other"])
+            categories = []
+            for app in top_apps:
+                name = app["process_name"]
+                if len(name) > 12:
+                    name = name[:10] + ".."
+                categories.append(name)
+                
+                minutes = app["duration_seconds"] / 60.0
+                cat = app["category"]
+                
+                target_cat = cat if cat in bar_sets else "other"
+                for cat_id, bset in bar_sets.items():
+                    if cat_id == target_cat:
+                        bset.append(minutes)
+                    else:
+                        bset.append(0)
+                        
+            self.current_categories = categories
+            series = QBarSeries()
+            for cat_id, bset in bar_sets.items():
+                has_data = False
+                for val_idx in range(bset.count()):
+                    if bset.at(val_idx) > 0:
+                        has_data = True
+                        break
+                if has_data:
+                    series.append(bset)
+                    
+            if series.count() == 0 and bar_sets:
+                series.append(bar_sets["other"])
+                
+            self.bar_chart.addSeries(series)
             
-        self.bar_chart.addSeries(series)
-        
-        # X-Axis (Categories)
-        axis_x = QBarCategoryAxis()
-        axis_x.append(categories)
-        self.bar_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
-        axis_x.setLabelsBrush(QBrush(QColor("#cfd8dc")))
-        
-        # Y-Axis (Values in minutes)
-        axis_y = QValueAxis()
-        axis_y.setTitleText("分钟")
-        axis_y.setTitleBrush(QBrush(QColor("#cfd8dc")))
-        axis_y.setLabelsBrush(QBrush(QColor("#cfd8dc")))
-        # Determine maximum value to set range dynamically
-        max_val = max([app["duration_seconds"] / 60.0 for app in top_apps]) if top_apps else 10.0
-        axis_y.setRange(0, max(1.0, max_val * 1.15))
-        self.bar_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
-        
-        # Styling Chart
-        self.bar_chart.setBackgroundBrush(QBrush(QColor("#2b2b35")))
-        self.bar_chart.setTitleBrush(QBrush(QColor("#ffffff")))
-        self.bar_chart.legend().setLabelColor(QColor("#cfd8dc"))
-        self.bar_chart.legend().setVisible(True)
-        self.bar_chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+            axis_x = QBarCategoryAxis()
+            axis_x.append(categories)
+            self.bar_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+            series.attachAxis(axis_x)
+            axis_x.setLabelsBrush(QBrush(label_color))
+            
+            axis_y = QValueAxis()
+            axis_y.setTitleText("分钟")
+            axis_y.setTitleBrush(QBrush(label_color))
+            axis_y.setLabelsBrush(QBrush(label_color))
+            max_val = max([app["duration_seconds"] / 60.0 for app in top_apps]) if top_apps else 10.0
+            axis_y.setRange(0, max(1.0, max_val * 1.15))
+            self.bar_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+            series.attachAxis(axis_y)
+            
+            self.bar_chart.setBackgroundBrush(QBrush(bg_color))
+            self.bar_chart.setTitleBrush(QBrush(text_color))
+            self.bar_chart.legend().setLabelColor(label_color)
+            self.bar_chart.legend().setVisible(True)
+            self.bar_chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+            
+            series.hovered.connect(self.on_bar_hovered)
+
+    def toggle_expand_bar_chart(self):
+        """ Toggle showing top 10 or all applications """
+        self.update_bar_chart()
+
+    def on_bar_hovered(self, status, index, barset):
+        """ 处理柱状图悬停事件，显示提示框 """
+        if status:
+            val = barset.at(index)
+            if val > 0:
+                # 获取应用真实名称
+                app_name = self.current_categories[index] if hasattr(self, 'current_categories') and index < len(self.current_categories) else ""
+                if hasattr(self, 'current_top_apps') and index < len(self.current_top_apps):
+                    app_name = self.current_top_apps[index]["process_name"]
+                
+                # 转换格式
+                total_seconds = int(val * 60)
+                hours = total_seconds // 3600
+                mins = (total_seconds % 3600) // 60
+                secs = total_seconds % 60
+                
+                duration_str = ""
+                if hours > 0:
+                    duration_str += f"{hours}小时"
+                if mins > 0 or hours > 0:
+                    duration_str += f"{mins}分钟"
+                duration_str += f"{secs}秒"
+                
+                from PyQt6.QtWidgets import QToolTip
+                from PyQt6.QtGui import QCursor
+                
+                tooltip_text = f"<b>应用:</b> {app_name}<br/><b>分类:</b> {barset.label()}<br/><b>时长:</b> {duration_str}"
+                QToolTip.showText(QCursor.pos(), tooltip_text, self.bar_view)
+        else:
+            from PyQt6.QtWidgets import QToolTip
+            QToolTip.hideText()
 
     def update_pie_chart(self):
         """ Fetch categories usage and render pie chart """
@@ -263,6 +417,22 @@ class StatsDialog(QDialog):
             cat_seconds["other"] = other_sec
             total_sec += other_sec
             
+        # 格式化并设置总时长显示
+        hours = total_sec // 3600
+        mins = (total_sec % 3600) // 60
+        secs = total_sec % 60
+        
+        duration_str = ""
+        if hours > 0:
+            duration_str += f"{hours}小时"
+        if mins > 0 or hours > 0:
+            duration_str += f"{mins}分钟"
+        duration_str += f"{secs}秒"
+        if not duration_str:
+            duration_str = "0秒"
+            
+        self.lbl_pie_total.setText(f"今日已监控软件总时长: {duration_str}")
+            
         if total_sec == 0:
             # Empty state
             series = QPieSeries()
@@ -290,10 +460,15 @@ class StatsDialog(QDialog):
             slices[0].setExploded(True)
             slices[0].setExplodeDistanceFactor(0.05)
         
+        is_dark = (self.theme_mode == "dark")
+        bg_color = QColor("#2b2b35") if is_dark else QColor("#ffffff")
+        text_color = QColor("#ffffff") if is_dark else QColor("#333333")
+        label_color = QColor("#cfd8dc") if is_dark else QColor("#555555")
+
         # Custom labels: 显示百分比 + 时长，放在切片外侧
         for s in slices:
             s.setLabelVisible(True)
-            s.setLabelColor(QColor("#ffffff"))
+            s.setLabelColor(QColor("#ffffff") if is_dark else QColor("#333333"))
             # 标签格式: 分类名 时长(占比%)
             pct = s.percentage() * 100
             minutes = s.value() // 60
@@ -303,9 +478,9 @@ class StatsDialog(QDialog):
         self.pie_chart.addSeries(series)
         
         # Styling Chart
-        self.pie_chart.setBackgroundBrush(QBrush(QColor("#2b2b35")))
-        self.pie_chart.setTitleBrush(QBrush(QColor("#ffffff")))
-        self.pie_chart.legend().setLabelColor(QColor("#cfd8dc"))
+        self.pie_chart.setBackgroundBrush(QBrush(bg_color))
+        self.pie_chart.setTitleBrush(QBrush(text_color))
+        self.pie_chart.legend().setLabelColor(label_color)
         self.pie_chart.legend().setVisible(True)
         self.pie_chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
 
@@ -328,27 +503,52 @@ class StatsDialog(QDialog):
         
         # QMessageBox manually styled to prevent text from being unreadable (Bug 1)
         msg = QMessageBox(None)
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #ffffff;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #ffffff;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 16px;
-                min-width: 60px;
-            }
-            QPushButton:hover {
-                background-color: #455a64;
-            }
-        """)
+        is_dark = (self.theme_mode == "dark")
+        if is_dark:
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #1e1e24;
+                    color: #ffffff;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QLabel {
+                    color: #ffffff;
+                    font-size: 13px;
+                }
+                QPushButton {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #455a64;
+                }
+            """)
+        else:
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QLabel {
+                    color: #333333;
+                    font-size: 13px;
+                }
+                QPushButton {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #d6d6d6;
+                }
+            """)
         
         if success:
             msg.setIcon(QMessageBox.Icon.Information)
@@ -363,70 +563,299 @@ class StatsDialog(QDialog):
         msg.exec()
 
     def apply_styles(self):
-        """ Apply modern dark stylesheet """
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e24;
-                color: #e0e0e6;
-                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-            }
-            #StatsTitle {
-                font-size: 18px;
-                font-weight: bold;
-                color: #81c784;
-                padding-bottom: 5px;
-            }
-            #TimeLabel {
-                color: #90a4ae;
-                font-size: 12px;
-                font-family: "Consolas", "Microsoft YaHei", monospace;
-            }
-            QTabWidget::pane {
-                border: 1px solid #42424a;
-                border-radius: 6px;
-                background-color: #2b2b35;
-            }
-            QTabBar::tab {
-                background-color: #37474f;
-                color: #b0bec5;
-                border: 1px solid #42424a;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QTabBar::tab:selected {
-                background-color: #2b2b35;
-                color: #ffffff;
-                border-bottom: 1px solid #2b2b35;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #455a64;
-                color: #ffffff;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #455a64;
-            }
-            QPushButton:pressed {
-                background-color: #263238;
-            }
-            QPushButton[text="导出 CSV"] {
-                background-color: #00796b;
-            }
-            QPushButton[text="导出 CSV"]:hover {
-                background-color: #00897b;
-            }
-            QPushButton[text="导出 CSV"]:pressed {
-                background-color: #004d40;
-            }
-        """)
+        """ Apply modern stylesheet based on light/dark mode """
+        is_dark = (self.theme_mode == "dark")
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #1e1e24;
+                    color: #e0e0e6;
+                    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                }
+                #StatsTitle {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #81c784;
+                    padding-bottom: 5px;
+                }
+                #TimeLabel {
+                    color: #90a4ae;
+                    font-size: 12px;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                    margin-right: 10px;
+                }
+                #BtnTheme {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                #BtnTheme:hover {
+                    background-color: #455a64;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #42424a;
+                    border-radius: 6px;
+                    background-color: #2b2b35;
+                }
+                QTabBar::tab {
+                    background-color: #37474f;
+                    color: #b0bec5;
+                    border: 1px solid #42424a;
+                    border-bottom: none;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }
+                QTabBar::tab:selected {
+                    background-color: #2b2b35;
+                    color: #ffffff;
+                    border-bottom: 1px solid #2b2b35;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #455a64;
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #455a64;
+                }
+                QPushButton:pressed {
+                    background-color: #263238;
+                }
+                QPushButton[text="导出 CSV"] {
+                    background-color: #00796b;
+                }
+                QPushButton[text="导出 CSV"]:hover {
+                    background-color: #00897b;
+                }
+                QPushButton[text="导出 CSV"]:pressed {
+                    background-color: #004d40;
+                }
+                #BtnExpand {
+                    margin-top: 5px;
+                    margin-bottom: 5px;
+                }
+                #BtnExpand:checked {
+                    background-color: #00796b;
+                }
+                #BtnExpand:checked:hover {
+                    background-color: #00897b;
+                }
+                #PieTotalLabel {
+                    background-color: #37474f;
+                    color: #81c784;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-bottom: 5px;
+                }
+                QTableWidget {
+                    background-color: #2b2b35;
+                    alternate-background-color: #24242d;
+                    color: #e0e0e6;
+                    gridline-color: #42424a;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QTableWidget::item {
+                    padding: 5px;
+                }
+                QTableWidget::item:selected {
+                    background-color: #00796b;
+                    color: #ffffff;
+                }
+                QHeaderView::section {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    padding: 6px;
+                    font-weight: bold;
+                    border: 1px solid #42424a;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #2b2b35;
+                    width: 10px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #546e7a;
+                    min-height: 20px;
+                    border-radius: 5px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #78909c;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QToolTip {
+                    background-color: #2b2b35;
+                    color: #e0e0e6;
+                    border: 1px solid #455a64;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                    font-size: 11px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                }
+                #StatsTitle {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #2e7d32;
+                    padding-bottom: 5px;
+                }
+                #TimeLabel {
+                    color: #555555;
+                    font-size: 12px;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                    margin-right: 10px;
+                }
+                #BtnTheme {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                #BtnTheme:hover {
+                    background-color: #d6d6d6;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    background-color: #ffffff;
+                }
+                QTabBar::tab {
+                    background-color: #e0e0e0;
+                    color: #555555;
+                    border: 1px solid #cccccc;
+                    border-bottom: none;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                }
+                QTabBar::tab:selected {
+                    background-color: #ffffff;
+                    color: #000000;
+                    border-bottom: 1px solid #ffffff;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #d6d6d6;
+                    color: #333333;
+                }
+                QPushButton {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #d6d6d6;
+                }
+                QPushButton:pressed {
+                    background-color: #b0b0b0;
+                }
+                QPushButton[text="导出 CSV"] {
+                    background-color: #2e7d32;
+                    color: #ffffff;
+                    border: none;
+                }
+                QPushButton[text="导出 CSV"]:hover {
+                    background-color: #388e3c;
+                }
+                QPushButton[text="导出 CSV"]:pressed {
+                    background-color: #1b5e20;
+                }
+                #BtnExpand {
+                    margin-top: 5px;
+                    margin-bottom: 5px;
+                }
+                #BtnExpand:checked {
+                    background-color: #2e7d32;
+                    color: #ffffff;
+                    border: none;
+                }
+                #BtnExpand:checked:hover {
+                    background-color: #388e3c;
+                }
+                #PieTotalLabel {
+                    background-color: #e8f5e9;
+                    color: #2e7d32;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-bottom: 5px;
+                }
+                QTableWidget {
+                    background-color: #ffffff;
+                    alternate-background-color: #f7f7f9;
+                    color: #333333;
+                    gridline-color: #e0e0e0;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QTableWidget::item {
+                    padding: 5px;
+                }
+                QTableWidget::item:selected {
+                    background-color: #a5d6a7;
+                    color: #1b5e20;
+                }
+                QHeaderView::section {
+                    background-color: #f5f5f5;
+                    color: #333333;
+                    padding: 6px;
+                    font-weight: bold;
+                    border: 1px solid #e0e0e0;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #ffffff;
+                    width: 10px;
+                    margin: 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #bdbdbd;
+                    min-height: 20px;
+                    border-radius: 5px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #9e9e9e;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    height: 0px;
+                }
+                QToolTip {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                    font-size: 11px;
+                }
+            """)

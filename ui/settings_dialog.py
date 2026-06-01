@@ -8,16 +8,139 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
     QSlider, QTabWidget, QWidget as QWidgetBase, QListWidget, QListWidgetItem,
-    QScrollArea, QFrame, QLineEdit
+    QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QDesktopServices, QKeySequence
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, QColor, QFont
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
 APP_VERSION = "1.0.5"
 
 logger = logging.getLogger("vibe_pet")
+
+
+class AnimatedSwitch(QAbstractButton):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setFixedSize(50, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        self._knob_position = 0.0
+        self.animation = QPropertyAnimation(self, b"knob_position", self)
+        self.animation.setDuration(200)
+        self.animation.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        
+    @pyqtProperty(float)
+    def knob_position(self):
+        return self._knob_position
+        
+    @knob_position.setter
+    def knob_position(self, pos):
+        self._knob_position = pos
+        self.update()
+        
+    def nextCheckState(self):
+        super().nextCheckState()
+        self.animate(self.isChecked())
+        
+    def setChecked(self, checked):
+        super().setChecked(checked)
+        self._knob_position = 1.0 if checked else 0.0
+        self.update()
+        
+    def animate(self, checked):
+        self.animation.stop()
+        self.animation.setStartValue(self._knob_position)
+        self.animation.setEndValue(1.0 if checked else 0.0)
+        self.animation.start()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        is_dark = True
+        try:
+            win = self.window()
+            if hasattr(win, "config") and win.config:
+                is_dark = (win.config.get("theme_mode", "dark") == "dark")
+        except Exception:
+            pass
+            
+        # Draw track
+        if self.isChecked():
+            track_color = QColor("#81c784" if is_dark else "#2e7d32")
+        else:
+            track_color = QColor("#3e3e4a" if is_dark else "#dcdcdc")
+            
+        painter.setBrush(QBrush(track_color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), 13, 13)
+        
+        # Draw knob
+        knob_color = QColor("#ffffff")
+        painter.setBrush(QBrush(knob_color))
+        
+        knob_size = 20
+        margin = 3
+        start_x = margin
+        end_x = self.width() - knob_size - margin
+        knob_x = start_x + (end_x - start_x) * self._knob_position
+        
+        if is_dark:
+            shadow_color = QColor(0, 0, 0, 60)
+            painter.setBrush(QBrush(shadow_color))
+            painter.drawEllipse(int(knob_x), margin + 1, knob_size, knob_size)
+            painter.setBrush(QBrush(knob_color))
+            
+        painter.drawEllipse(int(knob_x), margin, knob_size, knob_size)
+        painter.end()
+
+
+class SettingCard(QFrame):
+    def __init__(self, icon, title, description, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SettingCard")
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 12, 15, 12)
+        layout.setSpacing(12)
+        
+        # Left icon
+        self.lbl_icon = QLabel(icon)
+        self.lbl_icon.setObjectName("CardIcon")
+        self.lbl_icon.setFont(QFont("Segoe UI Emoji", 14))
+        self.lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_icon.setFixedSize(36, 36)
+        layout.addWidget(self.lbl_icon)
+        
+        # Text block
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setObjectName("CardTitle")
+        self.lbl_title.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.Bold))
+        text_layout.addWidget(self.lbl_title)
+        
+        self.lbl_desc = QLabel(description)
+        self.lbl_desc.setObjectName("CardDesc")
+        self.lbl_desc.setFont(QFont("Microsoft YaHei", 8))
+        self.lbl_desc.setWordWrap(True)
+        text_layout.addWidget(self.lbl_desc)
+        
+        layout.addLayout(text_layout, stretch=1)
+        
+        # Switch button
+        self.switch_btn = AnimatedSwitch(self)
+        layout.addWidget(self.switch_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+    def isChecked(self):
+        return self.switch_btn.isChecked()
+        
+    def setChecked(self, checked):
+        self.switch_btn.setChecked(checked)
 
 
 class SettingsDialog(QDialog):
@@ -27,13 +150,40 @@ class SettingsDialog(QDialog):
     def __init__(self, config_manager, parent=None):
         super().__init__(parent)
         self.config = config_manager
+        
+        # 安装事件过滤器，阻止滚轮事件改变 SpinBox 值（防止滑动时误触）
+        self.installEventFilter(self)
 
         self.setWindowTitle("VibePet - 系统设置")
-        # 不再固定大小，允许用户自由调节
-        self.setMinimumSize(600, 720)
-        self.resize(680, 800)
         # Prevent closing child widgets closing parent
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        
+        # 动态自适应屏幕分辨率与DPI缩放比例，防止低分辨率或高DPI缩放下设置界面超出屏幕而无法拖动
+        from PyQt6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen:
+            available_geo = screen.availableGeometry()
+            screen_width = available_geo.width()
+            screen_height = available_geo.height()
+            
+            # 计算适合当前屏幕的高度与宽度
+            width = min(680, int(screen_width * 0.95))
+            height = min(800, int(screen_height * 0.85))
+            
+            # 自适应调整最小尺寸
+            min_width = min(600, int(screen_width * 0.85))
+            min_height = min(720, int(screen_height * 0.8))
+            
+            self.setMinimumSize(min_width, min_height)
+            self.resize(width, height)
+            
+            # 居中移动到可用的桌面区域（排除任务栏）
+            x = available_geo.x() + (screen_width - width) // 2
+            y = available_geo.y() + (screen_height - height) // 2
+            self.move(x, y)
+        else:
+            self.setMinimumSize(600, 720)
+            self.resize(680, 800)
         
         # 设置窗口图标
         from PyQt6.QtGui import QIcon, QPixmap
@@ -75,20 +225,31 @@ class SettingsDialog(QDialog):
 
         # === Tab 1: 提醒设置 ===
         tab_reminders = QWidgetBase()
-        reminders_layout = QVBoxLayout(tab_reminders)
+        tab_reminders_layout = QVBoxLayout(tab_reminders)
+        tab_reminders_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_reminders = QScrollArea()
+        scroll_reminders.setWidgetResizable(True)
+        scroll_reminders.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_reminders.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_reminders_content = QWidgetBase()
+        scroll_reminders_content.setStyleSheet("background-color: transparent;")
+        reminders_layout = QVBoxLayout(scroll_reminders_content)
         reminders_layout.setContentsMargins(15, 15, 15, 15)
         reminders_layout.setSpacing(12)
 
         # 1. Reminder Switches Group
         switches_group = QGroupBox("提醒功能开关")
         switches_layout = QVBoxLayout()
+        switches_layout.setContentsMargins(15, 15, 15, 15)
         switches_layout.setSpacing(10)
 
-        self.cb_game = QCheckBox("游戏沉迷提醒（提醒适当放松）")
-        self.cb_sedentary = QCheckBox("久坐提醒（建议起身活动）")
-        self.cb_late_night = QCheckBox("深夜防熬夜提醒（关怀作息健康）")
-        self.cb_positive = QCheckBox("正向激励（专注工作时给予正面反馈）")
-        self.cb_fatigue = QCheckBox("疲劳状态强制提醒（每日电脑总使用警示）")
+        self.cb_game = SettingCard("🎮", "游戏沉迷提醒", "检测到游戏运行时间过长时提醒适当放松", self)
+        self.cb_sedentary = SettingCard("🚶‍♂️", "连续久坐提醒", "连续使用电脑时间过长时发出活动建议", self)
+        self.cb_late_night = SettingCard("🌙", "深夜防熬夜提醒", "深夜时段连续活跃时间较长时提醒合理作息", self)
+        self.cb_positive = SettingCard("🌟", "工作正向激励", "专注工作或学习一段时间后桌宠给出正向反馈与鼓励", self)
+        self.cb_fatigue = SettingCard("⚠️", "疲劳强制提醒", "每日电脑累计总使用时长达到限制后进行全屏强制警示", self)
 
         switches_layout.addWidget(self.cb_game)
         switches_layout.addWidget(self.cb_sedentary)
@@ -146,11 +307,23 @@ class SettingsDialog(QDialog):
         btn_reset_reminders.setObjectName("TabResetButton")
         btn_reset_reminders.clicked.connect(self.reset_reminders_tab)
         reminders_layout.addWidget(btn_reset_reminders, alignment=Qt.AlignmentFlag.AlignRight)
+        scroll_reminders.setWidget(scroll_reminders_content)
+        tab_reminders_layout.addWidget(scroll_reminders)
         self.tabs.addTab(tab_reminders, "提醒设置")
 
         # === Tab 2: 宠物外观 ===
         tab_appearance = QWidgetBase()
-        appearance_layout = QVBoxLayout(tab_appearance)
+        tab_appearance_layout = QVBoxLayout(tab_appearance)
+        tab_appearance_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_appearance = QScrollArea()
+        scroll_appearance.setWidgetResizable(True)
+        scroll_appearance.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_appearance.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_appearance_content = QWidgetBase()
+        scroll_appearance_content.setStyleSheet("background-color: transparent;")
+        appearance_layout = QVBoxLayout(scroll_appearance_content)
         appearance_layout.setContentsMargins(15, 15, 15, 15)
         appearance_layout.setSpacing(12)
 
@@ -199,6 +372,12 @@ class SettingsDialog(QDialog):
         opacity_row.addWidget(self.lbl_opacity_value)
         pet_form.addRow("气泡透明度:", opacity_row)
 
+        # 主题风格设置
+        self.combo_theme = QComboBox()
+        self.combo_theme.addItems(["暗黑模式", "明亮模式"])
+        self.combo_theme.setMinimumWidth(140)
+        pet_form.addRow("界面主题风格:", self.combo_theme)
+
         pet_group.setLayout(pet_form)
         appearance_layout.addWidget(pet_group)
         # Tab 2 恢复默认按钮
@@ -206,11 +385,23 @@ class SettingsDialog(QDialog):
         btn_reset_appearance.setObjectName("TabResetButton")
         btn_reset_appearance.clicked.connect(self.reset_appearance_tab)
         appearance_layout.addWidget(btn_reset_appearance, alignment=Qt.AlignmentFlag.AlignRight)
+        scroll_appearance.setWidget(scroll_appearance_content)
+        tab_appearance_layout.addWidget(scroll_appearance)
         self.tabs.addTab(tab_appearance, "宠物外观")
 
         # === Tab 3: 随机情绪 ===
         tab_emotions = QWidgetBase()
-        emotions_layout = QVBoxLayout(tab_emotions)
+        tab_emotions_layout = QVBoxLayout(tab_emotions)
+        tab_emotions_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_emotions = QScrollArea()
+        scroll_emotions.setWidgetResizable(True)
+        scroll_emotions.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_emotions.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_emotions_content = QWidgetBase()
+        scroll_emotions_content.setStyleSheet("background-color: transparent;")
+        emotions_layout = QVBoxLayout(scroll_emotions_content)
         emotions_layout.setContentsMargins(15, 15, 15, 15)
         emotions_layout.setSpacing(12)
 
@@ -319,6 +510,8 @@ class SettingsDialog(QDialog):
         btn_reset_emotions.setObjectName("TabResetButton")
         btn_reset_emotions.clicked.connect(self.reset_emotions_tab)
         emotions_layout.addWidget(btn_reset_emotions, alignment=Qt.AlignmentFlag.AlignRight)
+        scroll_emotions.setWidget(scroll_emotions_content)
+        tab_emotions_layout.addWidget(scroll_emotions)
         self.tabs.addTab(tab_emotions, "随机情绪")
 
         # === Tab 4: 进程名单 ===
@@ -348,7 +541,17 @@ class SettingsDialog(QDialog):
 
         # === Tab 5: 系统监控 ===
         tab_sysmon = QWidgetBase()
-        sysmon_layout = QVBoxLayout(tab_sysmon)
+        tab_sysmon_layout = QVBoxLayout(tab_sysmon)
+        tab_sysmon_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_sysmon = QScrollArea()
+        scroll_sysmon.setWidgetResizable(True)
+        scroll_sysmon.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_sysmon.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_sysmon_content = QWidgetBase()
+        scroll_sysmon_content.setStyleSheet("background-color: transparent;")
+        sysmon_layout = QVBoxLayout(scroll_sysmon_content)
         sysmon_layout.setContentsMargins(15, 15, 15, 15)
         sysmon_layout.setSpacing(12)
 
@@ -393,11 +596,23 @@ class SettingsDialog(QDialog):
         btn_reset_sysmon.clicked.connect(self.reset_sysmon_tab)
         sysmon_layout.addWidget(btn_reset_sysmon, alignment=Qt.AlignmentFlag.AlignRight)
         sysmon_layout.addStretch()
+        scroll_sysmon.setWidget(scroll_sysmon_content)
+        tab_sysmon_layout.addWidget(scroll_sysmon)
         self.tabs.addTab(tab_sysmon, "系统监控")
 
         # === Tab 6: 关于 ===
         tab_about = QWidgetBase()
-        about_layout = QVBoxLayout(tab_about)
+        tab_about_layout = QVBoxLayout(tab_about)
+        tab_about_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_about = QScrollArea()
+        scroll_about.setWidgetResizable(True)
+        scroll_about.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_about.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        scroll_about_content = QWidgetBase()
+        scroll_about_content.setStyleSheet("background-color: transparent;")
+        about_layout = QVBoxLayout(scroll_about_content)
         about_layout.setContentsMargins(15, 15, 15, 15)
         about_layout.setSpacing(12)
 
@@ -405,13 +620,18 @@ class SettingsDialog(QDialog):
         about_inner = QVBoxLayout()
         about_inner.setSpacing(10)
 
-        about_inner.addWidget(QLabel("<h2 style='color:#81c784;'>VibePet 桌面宠物</h2>"))
+        self.lbl_about_title = QLabel()
+        about_inner.addWidget(self.lbl_about_title)
         about_inner.addWidget(QLabel(f"<b>版本号:</b> {APP_VERSION}"))
         about_inner.addWidget(QLabel("<b>作者:</b> YTU22"))
         
-        lbl_github = QLabel("<b>GitHub:</b> <a href='https://github.com/YTU22/vibepet' style='color:#81c784;'>github.com/YTU22/vibepet</a>")
-        lbl_github.setOpenExternalLinks(True)
-        about_inner.addWidget(lbl_github)
+        self.lbl_github = QLabel()
+        self.lbl_github.setOpenExternalLinks(True)
+        about_inner.addWidget(self.lbl_github)
+        
+        self.lbl_website = QLabel()
+        self.lbl_website.setOpenExternalLinks(True)
+        about_inner.addWidget(self.lbl_website)
         
         about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
         
@@ -434,6 +654,8 @@ class SettingsDialog(QDialog):
         about_group.setLayout(about_inner)
         about_layout.addWidget(about_group)
         about_layout.addStretch()
+        scroll_about.setWidget(scroll_about_content)
+        tab_about_layout.addWidget(scroll_about)
         self.tabs.addTab(tab_about, "关于")
 
         layout.addWidget(self.tabs, stretch=1)
@@ -467,6 +689,15 @@ class SettingsDialog(QDialog):
         if success:
             self.config.set("auto_start", enabled)
             logger.info(f"Auto-start changed to: {enabled}")
+
+    def eventFilter(self, obj, event):
+        """ 拦截滚轮事件，防止滚动页面时误触 SpinBox/Slider 值 """
+        if event.type() == event.Type.Wheel:
+            # 如果滚轮事件目标不是滚动区域本身，则忽略（阻止 SpinBox/Slider 响应）
+            if obj is not self and not isinstance(obj, QScrollArea):
+                event.ignore()
+                return True
+        return super().eventFilter(obj, event)
 
     def _check_for_update(self):
         """ 检测 GitHub Releases 是否有新版本 """
@@ -538,6 +769,8 @@ class SettingsDialog(QDialog):
         self.cb_window_locked.setChecked(self.config.get("window_locked", False))
         self.cb_mouse_passthrough.setChecked(self.config.get("mouse_passthrough", False))
         self.cb_show_bubble.setChecked(self.config.get("show_app_bubble", True))
+        theme_val = self.config.get("theme_mode", "dark")
+        self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
 
         # 气泡透明度
         opacity = int(self.config.get("bubble_opacity", 1.0) * 100)
@@ -645,6 +878,8 @@ class SettingsDialog(QDialog):
         self.config.set("mouse_passthrough", self.cb_mouse_passthrough.isChecked())
         self.config.set("show_app_bubble", self.cb_show_bubble.isChecked())
         self.config.set("bubble_opacity", self.slider_bubble_opacity.value() / 100.0)
+        theme_val = "light" if self.combo_theme.currentIndex() == 1 else "dark"
+        self.config.set("theme_mode", theme_val)
 
         # 系统监控设置
         self.config.set("sys_monitor_enabled", self.cb_sysmon_enabled.isChecked())
@@ -685,23 +920,7 @@ class SettingsDialog(QDialog):
         msg.setIcon(QMessageBox.Icon.Information)
         msg.setWindowTitle("保存成功")
         msg.setText("设置已保存并生效！")
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #ffffff;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #81c784;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 16px;
-            }
-        """)
+        self._apply_msg_style(msg, is_warning=False)
         msg.exec()
 
     def _update_time(self):
@@ -717,23 +936,7 @@ class SettingsDialog(QDialog):
         msg.setText(f"确定要将【{tab_name}】恢复为默认值吗？")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         msg.setDefaultButton(QMessageBox.StandardButton.No)
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #ffffff;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #ff8a80;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 16px;
-            }
-        """)
+        self._apply_msg_style(msg, is_warning=True)
         return msg.exec() == QMessageBox.StandardButton.Yes
 
     def _show_ok(self, text):
@@ -742,23 +945,7 @@ class SettingsDialog(QDialog):
         msg.setIcon(QMessageBox.Icon.Information)
         msg.setWindowTitle("恢复成功")
         msg.setText(text)
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #ffffff;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #81c784;
-                font-size: 13px;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 16px;
-            }
-        """)
+        self._apply_msg_style(msg, is_warning=False)
         msg.exec()
 
     def reset_reminders_tab(self):
@@ -903,6 +1090,7 @@ class SettingsDialog(QDialog):
 
     def rebuild_apps_tab_content(self, initial=False):
         """ 动态重建进程名单 Tab 中的所有分类表单和检测列表 """
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
         # 1. 缓存当前输入的文本值，防止刷新界面丢失
         if not initial:
             self.cache_current_apps_inputs()
@@ -921,17 +1109,21 @@ class SettingsDialog(QDialog):
         
         self.txt_new_cat_name = QLineEdit()
         self.txt_new_cat_name.setPlaceholderText("输入新分类名称（如：学习、社交、办公）")
-        self.txt_new_cat_name.setStyleSheet("""
-            QLineEdit {
-                background-color: #2b2b35;
-                color: #ffffff;
-                border: 1px solid #455a64;
+        bg_color = "#2b2b35" if is_dark else "#ffffff"
+        text_color = "#ffffff" if is_dark else "#333333"
+        border_color = "#455a64" if is_dark else "#cccccc"
+        focus_color = "#81c784" if is_dark else "#2e7d32"
+        self.txt_new_cat_name.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 1px solid {border_color};
                 border-radius: 4px;
                 padding: 6px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #81c784;
-            }
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {focus_color};
+            }}
         """)
         
         btn_add_cat = QPushButton("添加分类")
@@ -963,8 +1155,9 @@ class SettingsDialog(QDialog):
         for cat_id, cat_name in categories.items():
             # 为每个分类分配一个水平标题行，以便在右侧放“删除”按钮
             header_layout = QHBoxLayout()
-            lbl_title = QLabel(f"<b>{cat_name}类进程名</b> ({cat_id}_apps):" if cat_id not in ["work", "game", "leisure"] else f"<b>{cat_name}类进程名</b>:")
-            lbl_title.setStyleSheet("font-size: 13px; color: #81c784;")
+            lbl_title = QLabel(f"<b>{cat_name}类进程名</b>:")
+            title_color = "#81c784" if is_dark else "#2e7d32"
+            lbl_title.setStyleSheet(f"font-size: 13px; color: {title_color};")
             header_layout.addWidget(lbl_title)
             header_layout.addStretch()
 
@@ -1022,25 +1215,31 @@ class SettingsDialog(QDialog):
         self.lw_detected.setMinimumHeight(150)
         self.lw_detected.setMaximumHeight(250)
         self.lw_detected.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.lw_detected.setStyleSheet("""
-            QListWidget {
-                background-color: #2b2b35;
-                color: #e0e0e6;
-                border: 1px solid #42424a;
+        lw_bg = "#2b2b35" if is_dark else "#ffffff"
+        lw_fg = "#e0e0e6" if is_dark else "#333333"
+        lw_border = "#42424a" if is_dark else "#cccccc"
+        lw_sel_bg = "#37474f" if is_dark else "#e0e0e0"
+        lw_sel_fg = "#81c784" if is_dark else "#2e7d32"
+        lw_hov_bg = "#353545" if is_dark else "#f0f0f0"
+        self.lw_detected.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {lw_bg};
+                color: {lw_fg};
+                border: 1px solid {lw_border};
                 border-radius: 6px;
                 padding: 4px;
-            }
-            QListWidget::item {
+            }}
+            QListWidget::item {{
                 padding: 4px 8px;
                 border-radius: 3px;
-            }
-            QListWidget::item:selected {
-                background-color: #37474f;
-                color: #81c784;
-            }
-            QListWidget::item:hover {
-                background-color: #353545;
-            }
+            }}
+            QListWidget::item:selected {{
+                background-color: {lw_sel_bg};
+                color: {lw_sel_fg};
+            }}
+            QListWidget::item:hover {{
+                background-color: {lw_hov_bg};
+            }}
         """)
         self.lw_detected.keyPressEvent = self._on_detected_list_keypress
         detected_layout.addWidget(self.lw_detected)
@@ -1056,31 +1255,46 @@ class SettingsDialog(QDialog):
             "game": ("#c62828", "#d32f2f", "#b71c1c"),
             "leisure": ("#1565c0", "#1976d2", "#0d47a1"),
         }
+        custom_colors_list = [
+            ("#7c4dff", "#8c5eff", "#6236df"), # 深紫色
+            ("#ab47bc", "#ba68c8", "#8e24aa"), # 紫红色
+            ("#00bfa5", "#1de9b6", "#00897b"), # 蓝绿色
+            ("#ff6f00", "#ff8f00", "#e65100"), # 橙色
+            ("#ec407a", "#f48fb1", "#d81b60"), # 玫瑰粉
+            ("#26a69a", "#4db6ac", "#00796b"), # 哑致绿
+            ("#78909c", "#90a4ae", "#546e7a"), # 蓝灰色
+        ]
         for cat_id, cat_name in categories.items():
             btn_label = cat_name
             if cat_id in shortcuts:
                 btn_label += f" ({shortcuts[cat_id]})"
             btn = QPushButton(btn_label)
             btn.setToolTip(f"将选中进程添加到{cat_name}类")
+            
+            # 确定按钮颜色：标准分类或从调色板中按哈希选取
             if cat_id in btn_colors:
                 normal, hover, pressed = btn_colors[cat_id]
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {normal};
-                        color: #ffffff;
-                        border: none;
-                        border-radius: 6px;
-                        padding: 6px 14px;
-                        font-weight: bold;
-                        font-size: 12px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {hover};
-                    }}
-                    QPushButton:pressed {{
-                        background-color: {pressed};
-                    }}
-                """)
+            else:
+                color_index = abs(hash(cat_id)) % len(custom_colors_list)
+                normal, hover, pressed = custom_colors_list[color_index]
+                
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {normal};
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                    font-weight: bold;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {hover};
+                }}
+                QPushButton:pressed {{
+                    background-color: {pressed};
+                }}
+            """)
             btn.clicked.connect(lambda checked=False, cid=cat_id: self._classify_selected(cid))
             btn_classify_layout.addWidget(btn)
 
@@ -1343,213 +1557,631 @@ class SettingsDialog(QDialog):
             row = self.lw_detected.row(item)
             self.lw_detected.takeItem(row)
 
+    def _apply_msg_style(self, msg, is_warning=False):
+        """ Apply light/dark styling to QMessageBox based on theme """
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            msg.setStyleSheet(f"""
+                QMessageBox {{
+                    background-color: #1e1e24;
+                    color: #e0e0e6;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }}
+                QLabel {{
+                    color: {"#ff8a80" if is_warning else "#cfd8dc"};
+                    font-size: {"14px" if is_warning else "12px"};
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+                QPushButton {{
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                }}
+            """)
+        else:
+            msg.setStyleSheet(f"""
+                QMessageBox {{
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }}
+                QLabel {{
+                    color: {"#d32f2f" if is_warning else "#333333"};
+                    font-size: {"14px" if is_warning else "12px"};
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+                QPushButton {{
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                }}
+            """)
+
     def apply_styles(self):
-        """ Apply modern dark stylesheet """
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1e1e24;
-                color: #e0e0e6;
-                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
-            }
-            #DialogTitle {
-                font-size: 18px;
-                font-weight: bold;
-                color: #81c784;
-                padding-bottom: 5px;
-            }
-            QTabWidget::pane {
-                border: 1px solid #42424a;
-                border-radius: 6px;
-                background-color: #25252e;
-                top: -1px;
-            }
-            QScrollArea {
-                background-color: transparent;
-                border: none;
-            }
-            QScrollArea > QWidget > QWidget {
-                background-color: transparent;
-            }
-            #AppsScrollArea, #AppsScrollContent {
-                background-color: transparent;
-                background: transparent;
-            }
-            QTabBar::tab {
-                background-color: #2b2b35;
-                color: #90a4ae;
-                border: 1px solid #42424a;
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                padding: 8px 18px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #25252e;
-                color: #81c784;
-                font-weight: bold;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #353545;
-                color: #cfd8dc;
-            }
-            QGroupBox {
-                border: 1px solid #42424a;
-                border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 15px;
-                font-weight: bold;
-                color: #90a4ae;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 5px;
-            }
-            QLabel {
-                color: #cfd8dc;
-                font-size: 12px;
-            }
-            #InfoLabel {
-                color: #90a4ae;
-                font-size: 11px;
-                padding: 8px;
-                background-color: #2b2b35;
-                border-radius: 6px;
-            }
-            QCheckBox {
-                color: #cfd8dc;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                background-color: #2b2b35;
-                border: 1px solid #546e7a;
-                border-radius: 3px;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #81c784;
-                border-color: #81c784;
-            }
-            QSpinBox {
-                background-color: #2b2b35;
-                color: #ffffff;
-                border: 1px solid #455a64;
-                border-radius: 4px;
-                padding: 2px 6px;
-                padding-right: 24px;
-                min-width: 100px;
-                min-height: 28px;
-            }
-            QSpinBox:focus {
-                border: 1px solid #81c784;
-            }
-            QSpinBox::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 18px;
-                border-left: 1px solid #455a64;
-                border-bottom: 1px solid #455a64;
-                background-color: #37474f;
-            }
-            QSpinBox::up-button:hover {
-                background-color: #455a64;
-            }
-            QSpinBox::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 18px;
-                border-left: 1px solid #455a64;
-                background-color: #37474f;
-            }
-            QSpinBox::down-button:hover {
-                background-color: #455a64;
-            }
-            QSpinBox::up-arrow {
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-bottom: 4px solid #cfd8dc;
-                width: 0;
-                height: 0;
-            }
-            QSpinBox::down-arrow {
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 4px solid #cfd8dc;
-                width: 0;
-                height: 0;
-            }
-            QSlider::groove:horizontal {
-                border: 1px solid #455a64;
-                height: 6px;
-                background: #2b2b35;
-                border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #81c784;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #cfd8dc;
-                border: 1px solid #455a64;
-                width: 16px;
-                height: 16px;
-                margin: -5px 0;
-                border-radius: 8px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #ffffff;
-            }
-            QTextEdit {
-                background-color: #2b2b35;
-                color: #ffffff;
-                border: 1px solid #455a64;
-                border-radius: 6px;
-                padding: 6px;
-            }
-            QTextEdit:focus {
-                border: 1px solid #81c784;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #455a64;
-            }
-            QPushButton:pressed {
-                background-color: #263238;
-            }
-            QPushButton[text="保存设置"] {
-                background-color: #2e7d32;
-            }
-            QPushButton[text="保存设置"]:hover {
-                background-color: #388e3c;
-            }
-            QPushButton[text="保存设置"]:pressed {
-                background-color: #1b5e20;
-            }
-            #TimeLabel {
-                color: #90a4ae;
-                font-size: 12px;
-                font-family: "Consolas", "Microsoft YaHei", monospace;
-            }
-            QPushButton#TabResetButton {
-                background-color: #455a64;
-                color: #cfd8dc;
-                font-size: 11px;
-                padding: 4px 10px;
-                border-radius: 4px;
-            }
-            QPushButton#TabResetButton:hover {
-                background-color: #c62828;
-                color: #ffffff;
-            }
-        """)
+        """ Apply modern stylesheet based on light/dark mode """
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #1e1e24;
+                    color: #e0e0e6;
+                    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                }
+                #DialogTitle {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #81c784;
+                    padding-bottom: 5px;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #42424a;
+                    border-radius: 6px;
+                    background-color: #25252e;
+                    top: -1px;
+                }
+                QScrollArea {
+                    background-color: transparent;
+                    border: none;
+                }
+                QScrollArea > QWidget > QWidget {
+                    background-color: transparent;
+                }
+                #AppsScrollArea, #AppsScrollContent {
+                    background-color: transparent;
+                    background: transparent;
+                }
+                QTabBar::tab {
+                    background-color: #2b2b35;
+                    color: #90a4ae;
+                    border: 1px solid #42424a;
+                    border-bottom: none;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    padding: 8px 18px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #25252e;
+                    color: #81c784;
+                    font-weight: bold;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #353545;
+                    color: #cfd8dc;
+                }
+                QGroupBox {
+                    border: 1px solid #42424a;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 15px;
+                    font-weight: bold;
+                    color: #90a4ae;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    left: 10px;
+                    padding: 0 5px;
+                }
+                QLabel {
+                    color: #cfd8dc;
+                    font-size: 12px;
+                }
+                #InfoLabel {
+                    color: #90a4ae;
+                    font-size: 11px;
+                    padding: 8px;
+                    background-color: #2b2b35;
+                    border-radius: 6px;
+                }
+                QCheckBox {
+                    color: #cfd8dc;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    background-color: #2b2b35;
+                    border: 1px solid #546e7a;
+                    border-radius: 3px;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #81c784;
+                    border-color: #81c784;
+                }
+                QSpinBox {
+                    background-color: #2b2b35;
+                    color: #ffffff;
+                    border: 1px solid #455a64;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    padding-right: 24px;
+                    min-width: 100px;
+                    min-height: 28px;
+                }
+                QSpinBox:focus {
+                    border: 1px solid #81c784;
+                }
+                QSpinBox::up-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: top right;
+                    width: 18px;
+                    border-left: 1px solid #455a64;
+                    border-bottom: 1px solid #455a64;
+                    background-color: #37474f;
+                }
+                QSpinBox::up-button:hover {
+                    background-color: #455a64;
+                }
+                QSpinBox::down-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: bottom right;
+                    width: 18px;
+                    border-left: 1px solid #455a64;
+                    background-color: #37474f;
+                }
+                QSpinBox::down-button:hover {
+                    background-color: #455a64;
+                }
+                QSpinBox::up-arrow {
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-bottom: 4px solid #cfd8dc;
+                    width: 0;
+                    height: 0;
+                }
+                QSpinBox::down-arrow {
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 4px solid #cfd8dc;
+                    width: 0;
+                    height: 0;
+                }
+                QSlider::groove:horizontal {
+                    border: 1px solid #455a64;
+                    height: 6px;
+                    background: #2b2b35;
+                    border-radius: 3px;
+                }
+                QSlider::sub-page:horizontal {
+                    background: #81c784;
+                    border-radius: 3px;
+                }
+                QSlider::handle:horizontal {
+                    background: #cfd8dc;
+                    border: 1px solid #455a64;
+                    width: 16px;
+                    height: 16px;
+                    margin: -5px 0;
+                    border-radius: 8px;
+                }
+                QSlider::handle:horizontal:hover {
+                    background: #ffffff;
+                }
+                QTextEdit {
+                    background-color: #2b2b35;
+                    color: #ffffff;
+                    border: 1px solid #455a64;
+                    border-radius: 6px;
+                    padding: 6px;
+                }
+                QTextEdit:focus {
+                    border: 1px solid #81c784;
+                }
+                QPushButton {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #455a64;
+                }
+                QPushButton:pressed {
+                    background-color: #263238;
+                }
+                QPushButton[text="保存设置"] {
+                    background-color: #2e7d32;
+                }
+                QPushButton[text="保存设置"]:hover {
+                    background-color: #388e3c;
+                }
+                QPushButton[text="保存设置"]:pressed {
+                    background-color: #1b5e20;
+                }
+                #TimeLabel {
+                    color: #90a4ae;
+                    font-size: 12px;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                }
+                QPushButton#TabResetButton {
+                    background-color: #455a64;
+                    color: #cfd8dc;
+                    font-size: 11px;
+                    padding: 4px 10px;
+                    border-radius: 4px;
+                }
+                QPushButton#TabResetButton:hover {
+                    background-color: #c62828;
+                    color: #ffffff;
+                }
+                QComboBox {
+                    background-color: #2b2b35;
+                    color: #ffffff;
+                    border: 1px solid #455a64;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    min-width: 120px;
+                    min-height: 28px;
+                }
+                QComboBox:focus {
+                    border: 1px solid #81c784;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 20px;
+                    border-left-width: 1px;
+                    border-left-color: #455a64;
+                    border-left-style: solid;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #2b2b35;
+                    color: #ffffff;
+                    selection-background-color: #81c784;
+                    selection-color: #1e1e24;
+                    border: 1px solid #455a64;
+                }
+                #SettingCard {
+                    background-color: #2b2b35;
+                    border: 1px solid #42424a;
+                    border-radius: 8px;
+                }
+                #SettingCard:hover {
+                    border: 1px solid #81c784;
+                    background-color: #353545;
+                }
+                #CardIcon {
+                    background-color: #1e1e24;
+                    border-radius: 18px;
+                }
+                #CardTitle {
+                    color: #ffffff;
+                    font-size: 13px;
+                }
+                #CardDesc {
+                    color: #90a4ae;
+                    font-size: 11px;
+                }
+                QToolTip {
+                    background-color: #2b2b35;
+                    color: #e0e0e6;
+                    border: 1px solid #455a64;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                    font-size: 11px;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #25252e;
+                    width: 10px;
+                    margin: 0px 0px 0px 0px;
+                    border-radius: 5px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #455a64;
+                    min-height: 20px;
+                    border-radius: 5px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #81c784;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                }
+                #DialogTitle {
+                    font-size: 18px;
+                    font-weight: bold;
+                    color: #2e7d32;
+                    padding-bottom: 5px;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    background-color: #ffffff;
+                    top: -1px;
+                }
+                QScrollArea {
+                    background-color: transparent;
+                    border: none;
+                }
+                QScrollArea > QWidget > QWidget {
+                    background-color: transparent;
+                }
+                #AppsScrollArea, #AppsScrollContent {
+                    background-color: transparent;
+                    background: transparent;
+                }
+                QTabBar::tab {
+                    background-color: #e0e0e0;
+                    color: #555555;
+                    border: 1px solid #cccccc;
+                    border-bottom: none;
+                    border-top-left-radius: 6px;
+                    border-top-right-radius: 6px;
+                    padding: 8px 18px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #ffffff;
+                    color: #2e7d32;
+                    font-weight: bold;
+                }
+                QTabBar::tab:hover:!selected {
+                    background-color: #d6d6d6;
+                    color: #333333;
+                }
+                QGroupBox {
+                    border: 1px solid #cccccc;
+                    border-radius: 8px;
+                    margin-top: 10px;
+                    padding-top: 15px;
+                    font-weight: bold;
+                    color: #666666;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    left: 10px;
+                    padding: 0 5px;
+                }
+                QLabel {
+                    color: #333333;
+                    font-size: 12px;
+                }
+                #InfoLabel {
+                    color: #555555;
+                    font-size: 11px;
+                    padding: 8px;
+                    background-color: #e0e0e0;
+                    border-radius: 6px;
+                }
+                QCheckBox {
+                    color: #333333;
+                    spacing: 8px;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    background-color: #ffffff;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #2e7d32;
+                    border-color: #2e7d32;
+                }
+                QSpinBox {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    padding-right: 24px;
+                    min-width: 100px;
+                    min-height: 28px;
+                }
+                QSpinBox:focus {
+                    border: 1px solid #2e7d32;
+                }
+                QSpinBox::up-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: top right;
+                    width: 18px;
+                    border-left: 1px solid #cccccc;
+                    border-bottom: 1px solid #cccccc;
+                    background-color: #e0e0e0;
+                }
+                QSpinBox::up-button:hover {
+                    background-color: #d6d6d6;
+                }
+                QSpinBox::down-button {
+                    subcontrol-origin: border;
+                    subcontrol-position: bottom right;
+                    width: 18px;
+                    border-left: 1px solid #cccccc;
+                    background-color: #e0e0e0;
+                }
+                QSpinBox::down-button:hover {
+                    background-color: #d6d6d6;
+                }
+                QSpinBox::up-arrow {
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-bottom: 4px solid #555555;
+                    width: 0;
+                    height: 0;
+                }
+                QSpinBox::down-arrow {
+                    border-left: 4px solid transparent;
+                    border-right: 4px solid transparent;
+                    border-top: 4px solid #555555;
+                    width: 0;
+                    height: 0;
+                }
+                QSlider::groove:horizontal {
+                    border: 1px solid #cccccc;
+                    height: 6px;
+                    background: #e0e0e0;
+                    border-radius: 3px;
+                }
+                QSlider::sub-page:horizontal {
+                    background: #2e7d32;
+                    border-radius: 3px;
+                }
+                QSlider::handle:horizontal {
+                    background: #ffffff;
+                    border: 1px solid #cccccc;
+                    width: 16px;
+                    height: 16px;
+                    margin: -5px 0;
+                    border-radius: 8px;
+                }
+                QSlider::handle:horizontal:hover {
+                    background: #f5f5f7;
+                }
+                QTextEdit {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 6px;
+                }
+                QTextEdit:focus {
+                    border: 1px solid #2e7d32;
+                }
+                QPushButton {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 8px 16px;
+                    font-weight: bold;
+                    font-size: 13px;
+                }
+                QPushButton:hover {
+                    background-color: #d6d6d6;
+                }
+                QPushButton:pressed {
+                    background-color: #b0b0b0;
+                }
+                QPushButton[text="保存设置"] {
+                    background-color: #2e7d32;
+                    color: #ffffff;
+                    border: none;
+                }
+                QPushButton[text="保存设置"]:hover {
+                    background-color: #388e3c;
+                }
+                QPushButton[text="保存设置"]:pressed {
+                    background-color: #1b5e20;
+                }
+                #TimeLabel {
+                    color: #555555;
+                    font-size: 12px;
+                    font-family: "Consolas", "Microsoft YaHei", monospace;
+                }
+                QPushButton#TabResetButton {
+                    background-color: #e0e0e0;
+                    color: #555555;
+                    font-size: 11px;
+                    padding: 4px 10px;
+                    border-radius: 4px;
+                }
+                QPushButton#TabResetButton:hover {
+                    background-color: #c62828;
+                    color: #ffffff;
+                }
+                QComboBox {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    min-width: 120px;
+                    min-height: 28px;
+                }
+                QComboBox:focus {
+                    border: 1px solid #2e7d32;
+                }
+                QComboBox::drop-down {
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 20px;
+                    border-left-width: 1px;
+                    border-left-color: #cccccc;
+                    border-left-style: solid;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #ffffff;
+                    color: #333333;
+                    selection-background-color: #a5d6a7;
+                    selection-color: #1b5e20;
+                    border: 1px solid #cccccc;
+                }
+                #SettingCard {
+                    background-color: #ffffff;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 8px;
+                }
+                #SettingCard:hover {
+                    border: 1px solid #2e7d32;
+                    background-color: #fafafa;
+                }
+                #CardIcon {
+                    background-color: #f5f5f7;
+                    border-radius: 18px;
+                }
+                #CardTitle {
+                    color: #333333;
+                    font-size: 13px;
+                }
+                #CardDesc {
+                    color: #666666;
+                    font-size: 11px;
+                }
+                QToolTip {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                    font-size: 11px;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background-color: #f0f0f0;
+                    width: 12px;
+                    margin: 0px 0px 0px 0px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:vertical {
+                    background-color: #b0bec5;
+                    min-height: 20px;
+                    border-radius: 6px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background-color: #2e7d32;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    border: none;
+                    background: none;
+                    height: 0px;
+                }
+            """)
+        
+        # Update dynamic labels in the About tab
+        link_color = "#81c784" if is_dark else "#2e7d32"
+        title_color = "#81c784" if is_dark else "#2e7d32"
+        if hasattr(self, "lbl_about_title"):
+            self.lbl_about_title.setText(f"<h2 style='color:{title_color}; margin:0; padding:0;'>VibePet 桌面宠物</h2>")
+        if hasattr(self, "lbl_github"):
+            self.lbl_github.setText(f"<b>GitHub:</b> <a href='https://github.com/YTU22/vibepet' style='color:{link_color};'>github.com/YTU22/vibepet</a>")
+        if hasattr(self, "lbl_website"):
+            self.lbl_website.setText(f"<b>综合官网:</b> <a href='https://vibeharbor.art' style='color:{link_color};'>vibeharbor.art</a>")

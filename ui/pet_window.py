@@ -11,7 +11,7 @@ from PyQt6.QtCore import (
     Qt, QPoint, QPropertyAnimation, QSequentialAnimationGroup, pyqtSlot,
     QEasingCurve, QTimer
 )
-from PyQt6.QtGui import QRegion, QColor, QFont, QPixmap, QPainter, QBrush
+from PyQt6.QtGui import QRegion, QColor, QFont, QPixmap, QPainter, QBrush, QIcon
 
 from utils.helpers import resource_path, set_auto_start
 from ui.settings_dialog import SettingsDialog
@@ -152,16 +152,77 @@ class PetWindow(QWidget):
         self.sys_panel = QLabel(self)
         self.sys_panel.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.sys_panel.setFont(QFont("Consolas", 8))
-        self.sys_panel.setStyleSheet("""
-            QLabel {
-                background-color: rgba(43, 43, 53, 200);
-                color: #e0e0e6;
-                border: 1px solid #42424a;
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-        """)
+        self._apply_sys_panel_style()
         self.sys_panel.hide()
+
+    def _apply_sys_panel_style(self):
+        """ Apply light/dark style to sys_panel based on configuration """
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            self.sys_panel.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(43, 43, 53, 200);
+                    color: #e0e0e6;
+                    border: 1px solid #42424a;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                }
+            """)
+        else:
+            self.sys_panel.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(255, 255, 255, 220);
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 4px 8px;
+                }
+            """)
+
+    def _apply_msg_style(self, msg, is_warning=False):
+        """ Apply light/dark styling to QMessageBox based on theme """
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            msg.setStyleSheet(f"""
+                QMessageBox {{
+                    background-color: #1e1e24;
+                    color: #e0e0e6;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }}
+                QLabel {{
+                    color: {"#ff8a80" if is_warning else "#cfd8dc"};
+                    font-size: {"14px" if is_warning else "12px"};
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+                QPushButton {{
+                    background-color: {"#c62828" if is_warning else "#37474f"};
+                    color: #ffffff;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+            """)
+        else:
+            msg.setStyleSheet(f"""
+                QMessageBox {{
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }}
+                QLabel {{
+                    color: {"#d32f2f" if is_warning else "#333333"};
+                    font-size: {"14px" if is_warning else "12px"};
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+                QPushButton {{
+                    background-color: {"#d32f2f" if is_warning else "#e0e0e0"};
+                    color: {"#ffffff" if is_warning else "#333333"};
+                    border: {"none" if is_warning else "1px solid #cccccc"};
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    font-weight: {"bold" if is_warning else "normal"};
+                }}
+            """)
 
     def _apply_sys_monitor_state(self):
         """ 根据配置应用系统监控状态（启动/停止后台线程，显示/隐藏面板） """
@@ -497,26 +558,47 @@ class PetWindow(QWidget):
         # 从配置读取气泡透明度（默认1.0=不透明）
         opacity = self.config.get("bubble_opacity", 1.0)
         alpha = int(opacity * 255)
-        self.bubble.setStyleSheet(f"""
-            QLabel {{
-                background-color: rgba(255, 255, 255, {alpha});
-                color: #2b2b35;
-                border: 2px solid #2b2b35;
-                border-radius: 10px;
-                padding: 6px;
-            }}
-        """)
-        # 应用气泡样式
-        self.app_bubble.setStyleSheet(f"""
-            QLabel {{
-                background-color: rgba(255, 255, 255, {alpha});
-                color: #000000;
-                border: 1px solid #c0c0c0;
-                border-radius: 6px;
-                padding: 2px;
-                font-size: 9px;
-            }}
-        """)
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            self.bubble.setStyleSheet(f"""
+                QLabel {{
+                    background-color: rgba(43, 43, 53, {alpha});
+                    color: #e0e0e6;
+                    border: 2px solid #42424a;
+                    border-radius: 10px;
+                    padding: 6px;
+                }}
+            """)
+            self.app_bubble.setStyleSheet(f"""
+                QLabel {{
+                    background-color: rgba(43, 43, 53, {alpha});
+                    color: #e0e0e6;
+                    border: 1px solid #42424a;
+                    border-radius: 6px;
+                    padding: 2px;
+                    font-size: 9px;
+                }}
+            """)
+        else:
+            self.bubble.setStyleSheet(f"""
+                QLabel {{
+                    background-color: rgba(255, 255, 255, {alpha});
+                    color: #2b2b35;
+                    border: 2px solid #cccccc;
+                    border-radius: 10px;
+                    padding: 6px;
+                }}
+            """)
+            self.app_bubble.setStyleSheet(f"""
+                QLabel {{
+                    background-color: rgba(255, 255, 255, {alpha});
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 6px;
+                    padding: 2px;
+                    font-size: 9px;
+                }}
+            """)
 
     def show_bubble_message(self, text):
         """ Trigger floating bubble animation with text """
@@ -747,23 +829,42 @@ class PetWindow(QWidget):
         menu.addSeparator()
         act_exit = menu.addAction("退出")
 
-        # Apply dark premium style to menu
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #2b2b35;
-                color: #cfd8dc;
-                border: 1px solid #455a64;
-                border-radius: 4px;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QMenu::item {
-                padding: 6px 20px;
-            }
-            QMenu::item:selected {
-                background-color: #37474f;
-                color: #ffffff;
-            }
-        """)
+        # Apply theme-based style to menu
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        if is_dark:
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #2b2b35;
+                    color: #cfd8dc;
+                    border: 1px solid #455a64;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QMenu::item {
+                    padding: 6px 20px;
+                }
+                QMenu::item:selected {
+                    background-color: #37474f;
+                    color: #ffffff;
+                }
+            """)
+        else:
+            menu.setStyleSheet("""
+                QMenu {
+                    background-color: #ffffff;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QMenu::item {
+                    padding: 6px 20px;
+                }
+                QMenu::item:selected {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                }
+            """)
 
         action = menu.exec(self.mapToGlobal(event.pos()))
         if action == act_stats:
@@ -798,6 +899,7 @@ class PetWindow(QWidget):
                 return
 
         dialog = StatsDialog(self.db, self.config, None)
+        dialog.theme_changed.connect(self.on_settings_changed)
         self.active_dialogs.append(dialog)
         dialog.finished.connect(lambda: self.active_dialogs.remove(dialog))
         dialog.show()
@@ -843,9 +945,33 @@ class PetWindow(QWidget):
         
         # 重新应用系统监控设置
         self._apply_sys_monitor_state()
-        # self.update_mask_region()
+        
+        # 重新应用系统监控面板的主题样式
+        self._apply_sys_panel_style()
 
-        logger.info("Settings applied to pet window.")
+        # 重新应用主题到所有活动对话框
+        theme_val = self.config.get("theme_mode", "dark")
+        for d in self.active_dialogs:
+            if hasattr(d, "apply_styles"):
+                # 如果是 StatsDialog，同步它的 self.theme_mode 并刷新
+                if isinstance(d, StatsDialog):
+                    d.theme_mode = theme_val
+                    btn_text = "暗黑模式" if theme_val == "light" else "明亮模式"
+                    if hasattr(d, "btn_theme"):
+                        d.btn_theme.setText(btn_text)
+                    d.apply_styles()
+                    d.refresh_data()
+                elif isinstance(d, SettingsDialog):
+                    if hasattr(d, "combo_theme"):
+                        d.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
+                    d.apply_styles()
+                else:
+                    d.apply_styles()
+            elif isinstance(d, QMessageBox):
+                is_warning = (d.icon() == QMessageBox.Icon.Warning)
+                self._apply_msg_style(d, is_warning=is_warning)
+
+        logger.info("Settings applied to pet window and all active dialogs.")
 
     @pyqtSlot(str, str, bool, int, int)
     def on_status_updated(self, app_name, category, is_idle, today_total_s, today_game_s):
@@ -875,30 +1001,32 @@ class PetWindow(QWidget):
 
     def open_about_dialog(self):
         msg = QMessageBox(None)
+        self.active_dialogs.append(msg)
+        msg.finished.connect(lambda: self.active_dialogs.remove(msg))
         msg.setWindowTitle("关于 VibePet")
+        
+        # 设置窗口图标
+        icon_path = resource_path("assets/icon.png")
+        msg.setWindowIcon(QIcon(icon_path))
+        
+        # 设置对话框主体图标
+        pixmap = QPixmap(icon_path)
+        if not pixmap.isNull():
+            scaled_pixmap = pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            msg.setIconPixmap(scaled_pixmap)
+        
+        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        link_color = "#81c784" if is_dark else "#2e7d32"
+        
         msg.setText(
             f"<h3>VibePet 桌面宠物软件</h3>"
             f"<p><b>版本:</b> {APP_VERSION}</p>"
-            f"<p><b>作者:</b> 丞客Show</p>"
-            f"<p><b>官方网站:</b> <a href='https://vibeharbor.art' style='color:#81c784;'>vibeharbor.art</a></p>"
+            f"<p><b>作者:</b> YTU22</p>"
+            f"<p><b>GitHub:</b> <a href='https://github.com/YTU22/vibepet' style='color:{link_color};'>github.com/YTU22/vibepet</a></p>"
+            f"<p><b>官方网站:</b> <a href='https://vibeharbor.art' style='color:{link_color};'>vibeharbor.art</a></p>"
             f"<p>实时监测软件时长，守护您的作息与健康！</p>"
         )
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #e0e0e6;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #cfd8dc;
-            }
-            QPushButton {
-                background-color: #37474f;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 12px;
-            }
-        """)
+        self._apply_msg_style(msg, is_warning=False)
         msg.exec()
 
     @pyqtSlot()
@@ -908,25 +1036,7 @@ class PetWindow(QWidget):
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setWindowTitle("VibePet 健康警告")
         msg.setText("您今日累计使用电脑已超过 8 小时！\n建议您现在离开电脑，闭眼休息 10 分钟或起身活动活动！")
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #1e1e24;
-                color: #e0e0e6;
-                font-family: "Microsoft YaHei", sans-serif;
-            }
-            QLabel {
-                color: #ff8a80; /* Alert Red color for warning text */
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton {
-                background-color: #c62828;
-                color: #ffffff;
-                border-radius: 4px;
-                padding: 6px 16px;
-                font-weight: bold;
-            }
-        """)
+        self._apply_msg_style(msg, is_warning=True)
         msg.show()
         # Non-blocking, stays on screen
         self.active_dialogs.append(msg)
