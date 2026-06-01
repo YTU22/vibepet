@@ -1,110 +1,142 @@
+#!/usr/bin/env python3
+"""
+VibePet 独立更新器
+用法: VibePetUpdater.exe <app_dir> <zip_path>
+"""
 import os
 import sys
 import time
+import shutil
 import subprocess
-import urllib.request
-import urllib.error
-
-UPDATE_API_URL = "https://vibeharbor.art/api/github/vibepet/latest"
-DOWNLOAD_API_URL = "https://vibeharbor.art/api/github/vibepet/download-latest"
+import zipfile
 
 
-def check_for_update(current_version):
-    """检查是否有新版本，返回 (has_update, latest_version, download_url)"""
-    try:
-        req = urllib.request.Request(
-            UPDATE_API_URL,
-            headers={"User-Agent": "VibePet-UpdateChecker"}
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        
-        latest = data.get("tag_name", "").lstrip("v")
-        if not latest:
-            return False, None, None
-        
-        def parse_ver(v):
-            try:
-                return tuple(int(x) for x in v.split(".")[:3])
-            except Exception:
-                return (0, 0, 0)
-        
-        if parse_ver(latest) > parse_ver(current_version):
-            return True, latest, DOWNLOAD_API_URL
-        return False, latest, None
-    except Exception as e:
-        print(f"Check update failed: {e}")
-        return False, None, None
-
-
-def download_update(download_url, save_path, progress_callback=None):
-    """下载更新文件，返回是否成功"""
-    try:
-        req = urllib.request.Request(
-            download_url,
-            headers={"User-Agent": "VibePet-Updater"}
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            total_size = int(resp.headers.get('content-length', 0))
-            downloaded = 0
-            chunk_size = 8192
-            
-            with open(save_path, 'wb') as f:
-                while True:
-                    chunk = resp.read(chunk_size)
-                    if not chunk:
+def wait_for_exit(app_dir, timeout=30):
+    """等待 VibePet 进程退出"""
+    exe_path = os.path.join(app_dir, "VibePet.exe")
+    for i in range(timeout):
+        # 检查进程是否还在运行
+        try:
+            import psutil
+            for proc in psutil.process_iter(['pid', 'name', 'exe']):
+                try:
+                    if proc.info['exe'] and proc.info['exe'].lower() == exe_path.lower():
+                        time.sleep(1)
                         break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if progress_callback and total_size > 0:
-                        progress_callback(downloaded, total_size)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            else:
+                return True
+        except ImportError:
+            # 没有 psutil，用 tasklist
+            result = subprocess.run(
+                ['tasklist', '/FI', f'IMAGENAME eq VibePet.exe'],
+                capture_output=True, text=True
+            )
+            if 'VibePet.exe' not in result.stdout:
+                return True
+            time.sleep(1)
+    return False
+
+
+def force_kill(app_dir):
+    """强制结束 VibePet 进程"""
+    try:
+        subprocess.run(['taskkill', '/F', '/IM', 'VibePet.exe'], 
+                      capture_output=True, check=False)
+        time.sleep(2)
+    except Exception:
+        pass
+
+
+def update(app_dir, zip_path):
+    """执行更新：解压 zip 覆盖原文件"""
+    temp_dir = os.path.join(app_dir, '_update_temp')
+    
+    try:
+        # 1. 清理临时目录
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # 2. 解压 zip
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(temp_dir)
+        
+        # 3. 找到解压后的主文件夹
+        extracted_items = os.listdir(temp_dir)
+        if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
+            source_dir = os.path.join(temp_dir, extracted_items[0])
+        else:
+            source_dir = temp_dir
+        
+        # 4. 备份旧文件（除了 VibePet.exe 和运行时数据）
+        backup_dir = os.path.join(app_dir, '_backup')
+        if os.path.exists(backup_dir):
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        for item in os.listdir(app_dir):
+            if item in ('VibePet.exe', 'config.json', 'usage.db', 'vibe_pet.log', 
+                       '_update_temp', '_backup', 'vibepet_update.ps1'):
+                continue
+            src = os.path.join(app_dir, item)
+            dst = os.path.join(backup_dir, item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+        
+        # 5. 复制新文件（覆盖，但保留用户数据）
+        for item in os.listdir(source_dir):
+            if item in ('config.json', 'usage.db', 'vibe_pet.log'):
+                continue  # 保留用户数据
+            
+            src = os.path.join(source_dir, item)
+            dst = os.path.join(app_dir, item)
+            
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        
+        # 6. 清理临时文件
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(backup_dir, ignore_errors=True)
+        os.remove(zip_path)
+        
+        # 7. 启动新版本
+        exe_path = os.path.join(app_dir, "VibePet.exe")
+        subprocess.Popen([exe_path], cwd=app_dir)
+        
         return True
+        
     except Exception as e:
-        print(f"Download failed: {e}")
+        print(f"Update failed: {e}")
         return False
 
 
-def create_update_bat(old_exe_path, new_exe_path):
-    """创建批处理脚本用于替换 exe 并启动新版本"""
-    bat_content = f'''@echo off
-chcp 65001 >nul
-echo 正在等待 VibePet 关闭...
-
-:wait_loop
-tasklist | findstr "VibePet.exe" >nul
-if %errorlevel% == 0 (
-    timeout /t 1 /nobreak >nul
-    goto wait_loop
-)
-
-echo 正在更新...
-timeout /t 1 /nobreak >nul
-
-copy /Y "{new_exe_path}" "{old_exe_path}"
-if %errorlevel% neq 0 (
-    echo 更新失败，请手动复制文件
-    pause
-    exit /b 1
-)
-
-echo 更新完成，正在启动新版本...
-start "" "{old_exe_path}"
-
-del "{new_exe_path}"
-del "%~f0"
-'''
-    bat_path = os.path.join(os.path.dirname(new_exe_path), "vibepet_update.bat")
-    with open(bat_path, 'w', encoding='utf-8') as f:
-        f.write(bat_content)
-    return bat_path
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: VibePetUpdater.exe <app_dir> <zip_path>")
+        sys.exit(1)
+    
+    app_dir = sys.argv[1]
+    zip_path = sys.argv[2]
+    
+    # 等待 VibePet 退出
+    if not wait_for_exit(app_dir):
+        force_kill(app_dir)
+    
+    # 执行更新
+    if update(app_dir, zip_path):
+        print("Update successful!")
+    else:
+        print("Update failed!")
+        input("Press Enter to exit...")
 
 
-def run_updater(old_exe_path, new_exe_path):
-    """启动更新器（批处理），然后退出当前程序"""
-    bat_path = create_update_bat(old_exe_path, new_exe_path)
-    # 使用 cmd /c start 让批处理独立运行
-    subprocess.Popen(
-        ['cmd', '/c', 'start', '', bat_path],
-        shell=False,
-        creationflags=subprocess.CREATE_NEW_CONSOLE
-    )
+if __name__ == '__main__':
+    main()

@@ -4,7 +4,7 @@ from PyQt6.QtGui import QIcon, QAction, QPixmap
 from PyQt6.QtCore import Qt
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
-APP_VERSION = "1.0.8.2"
+APP_VERSION = "1.0.8.5"
 
 logger = logging.getLogger("vibe_pet")
 

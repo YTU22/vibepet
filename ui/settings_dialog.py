@@ -18,7 +18,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.0.8.2"
+APP_VERSION = "1.0.8.5"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -809,7 +809,7 @@ class SettingsDialog(QDialog):
             def run(self):
                 try:
                     app_dir = get_app_dir()
-                    temp_exe = os.path.join(app_dir, f"VibePet_v{self.parent()._latest_version}.exe")
+                    temp_zip = os.path.join(app_dir, "VibePet_update.zip")
                     
                     req = urllib.request.Request(
                         "https://vibeharbor.art/api/github/vibepet/download-latest",
@@ -820,7 +820,7 @@ class SettingsDialog(QDialog):
                         downloaded = 0
                         chunk_size = 8192
                         
-                        with open(temp_exe, 'wb') as f:
+                        with open(temp_zip, 'wb') as f:
                             while True:
                                 chunk = resp.read(chunk_size)
                                 if not chunk:
@@ -830,7 +830,7 @@ class SettingsDialog(QDialog):
                                 if total_size > 0:
                                     self.progress.emit(int(downloaded * 100 / total_size))
                     
-                    self.finished.emit(True, temp_exe)
+                    self.finished.emit(True, temp_zip)
                 except Exception as e:
                     self.finished.emit(False, str(e))
         
@@ -849,16 +849,15 @@ class SettingsDialog(QDialog):
             self.lbl_update_status.setText(f"<span style='color:#ff9800;'>下载失败: {result}</span>")
             return
         
-        temp_exe = result
-        current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
+        temp_zip = result
         
         # 提示用户关闭程序后开始更新
         msg = QMessageBox(self)
         msg.setWindowTitle("下载完成")
         msg.setText(
             f"新版本已下载完成！\n\n"
-            f"点击【确定】将关闭当前程序并开始安装更新。\n"
-            f"安装完成后会自动启动新版本。"
+            f"点击【确定】将关闭当前程序并开始全自动安装更新。\n"
+            f"更新完成后，软件将自动重新启动为最新版本。"
         )
         msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         msg.setDefaultButton(QMessageBox.StandardButton.Ok)
@@ -881,82 +880,62 @@ class SettingsDialog(QDialog):
         """)
         
         if msg.exec() == QMessageBox.StandardButton.Ok:
-            self._run_updater_and_exit(current_exe, temp_exe)
+            self._run_updater_and_exit(temp_zip)
     
-    def _run_updater_and_exit(self, old_exe, new_exe):
-        """ 创建独立更新器进程，用 move 命令替换 exe（避免文件锁定和 SmartScreen） """
+    def _run_updater_and_exit(self, temp_zip):
+        """ 启动后台 PowerShell 执行静默解压替换，并退出当前程序 """
+        import subprocess
+        import sys
+        import os
+        
         app_dir = get_app_dir()
+        current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
         
-        # 策略：
-        # 1. 把旧 exe 重命名为 .old（解除锁定）
-        # 2. 把新 exe move 到原位置（move 比 copy 更不容易触发 SmartScreen）
-        # 3. 启动新 exe
-        # 4. 删除 .old 文件和临时脚本
-        
-        ps_script = f'''
-$oldExe = '{old_exe}'
-$newExe = '{new_exe}'
-$oldBackup = '{old_exe}.old'
-
-# 等待原进程完全退出（最多等 30 秒）
-for ($i = 0; $i -lt 30; $i++) {{
-    $proc = Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' -and $_.Path -eq $oldExe }}
-    if (-not $proc) {{ break }}
-    Start-Sleep -Seconds 1
-}}
-
-# 强制结束所有 VibePet 进程（确保文件句柄释放）
-Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' }} | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
-
-# 替换策略：重命名旧文件 → move 新文件 → 启动 → 清理
-try {{
-    # 如果存在旧备份，先删除
-    if (Test-Path $oldBackup) {{
-        Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
-    }}
-    
-    # 把旧 exe 重命名为 .old（这样原位置就空了，解除文件锁定）
-    Rename-Item -Path $oldExe -NewName $oldBackup -Force -ErrorAction Stop
-    
-    # 把新 exe move 到原位置（move 不会触发 SmartScreen 重新扫描）
-    Move-Item -Path $newExe -Destination $oldExe -Force -ErrorAction Stop
-    
-    # 启动新版本
-    Start-Process -FilePath $oldExe
-    
-    # 延迟后删除备份文件（给用户时间看到程序启动成功）
-    Start-Sleep -Seconds 5
-    Remove-Item -Path $oldBackup -Force -ErrorAction SilentlyContinue
-}} catch {{
-    # 如果 move 失败，尝试恢复旧版本
-    if ((Test-Path $oldBackup) -and -not (Test-Path $oldExe)) {{
-        Rename-Item -Path $oldBackup -NewName $oldExe -Force -ErrorAction SilentlyContinue
-    }}
-}}
-
-# 删除自身
-Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
-'''
-        
-        ps_path = os.path.join(app_dir, "vibepet_update.ps1")
-        
-        try:
-            with open(ps_path, 'w', encoding='utf-8') as f:
-                f.write(ps_script)
+        if getattr(sys, 'frozen', False):
+            exe_name = os.path.basename(current_exe)
             
-            # 用 PowerShell 隐藏窗口执行
-            subprocess.Popen(
-                ['powershell', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
-                shell=False,
-                creationflags=subprocess.CREATE_NO_WINDOW
+            # PowerShell 命令：
+            # 1. 寻找正在运行的 VibePet 进程并强制结束它（防止用户未完全关闭或多开）
+            # 2. 等待 1 秒确保释放
+            # 3. 将新下载的 zip 包解压并强行覆盖到当前目录
+            # 4. 删除 zip 临时文件
+            # 5. 启动更新后的 VibePet.exe
+            # 采用 -WindowStyle Hidden 隐藏 PowerShell 黑窗
+            ps_command = (
+                f'Start-Sleep -Seconds 1; '
+                f'$proc = Get-Process -Name "{exe_name.replace(".exe", "")}" -ErrorAction SilentlyContinue; '
+                f'if ($proc) {{ $proc | Stop-Process -Force; Start-Sleep -Seconds 1 }}; '
+                f'Expand-Archive -Path "{temp_zip}" -DestinationPath "{app_dir}" -Force; '
+                f'Remove-Item -Path "{temp_zip}" -Force; '
+                f'Start-Process -FilePath "{current_exe}" -WorkingDirectory "{app_dir}"'
             )
             
-            # 延迟后退出当前程序
-            QTimer.singleShot(800, self._quit_for_update)
-        except Exception as e:
-            logger.error(f"Failed to create updater: {e}")
-            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>更新失败: {e}</span>")
+            try:
+                subprocess.Popen(
+                    ["powershell", "-WindowStyle", "Hidden", "-Command", ps_command],
+                    shell=True,
+                    creationflags=0x08000000  # CREATE_NO_WINDOW
+                )
+                logger.info("Automatic updater script launched via PowerShell background task.")
+                self._quit_for_update()
+            except Exception as e:
+                logger.error(f"Failed to start automatic updater: {e}")
+                self.lbl_update_status.setText(f"<span style='color:#ff9800;'>更新失败: {e}</span>")
+        else:
+            # 开发环境下仅解压并提示
+            try:
+                import zipfile
+                with zipfile.ZipFile(temp_zip, 'r') as zf:
+                    zf.extractall(app_dir)
+                os.remove(temp_zip)
+                
+                msg = QMessageBox(self)
+                msg.setWindowTitle("更新成功 (开发环境)")
+                msg.setText("开发环境：更新包已成功解压并覆盖当前工作目录。请手动重启以应用更新。")
+                msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                msg.exec()
+            except Exception as e:
+                self.lbl_update_status.setText(f"<span style='color:#ff9800;'>解压失败: {e}</span>")
     
     def _quit_for_update(self):
         """ 退出程序以便更新器替换 exe """
