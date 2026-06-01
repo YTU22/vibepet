@@ -884,51 +884,49 @@ class SettingsDialog(QDialog):
         app_dir = get_app_dir()
         bat_path = os.path.join(app_dir, "vibepet_update.bat")
         
-        bat_content = f'''@echo off
-chcp 65001 >nul
-echo ========================================
-echo   VibePet 更新程序
-echo ========================================
-echo.
-echo 正在等待 VibePet 关闭...
+        # 使用 PowerShell 隐藏窗口执行更新，用户看不到命令行
+        ps_script = f'''
+$oldExe = '{old_exe}'
+$newExe = '{new_exe}'
+$appName = 'VibePet.exe'
 
-:wait_loop
-tasklist | findstr "VibePet.exe" >nul
-if %errorlevel% == 0 (
-    timeout /t 1 /nobreak >nul
-    goto wait_loop
-)
+# 等待原进程退出（最多等 30 秒）
+for ($i = 0; $i -lt 30; $i++) {{
+    $proc = Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' -or $_.Path -eq $oldExe }}
+    if (-not $proc) {{ break }}
+    Start-Sleep -Seconds 1
+}}
 
-echo 正在安装更新...
-timeout /t 2 /nobreak >nul
+# 强制结束残留进程
+Get-Process | Where-Object {{ $_.ProcessName -like '*VibePet*' }} | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
 
-copy /Y "{new_exe}" "{old_exe}"
-if %errorlevel% neq 0 (
-    echo.
-    echo [错误] 更新失败，请手动复制文件：
-    echo   从: {new_exe}
-    echo   到: {old_exe}
-    echo.
-    pause
-    exit /b 1
-)
+# 替换文件
+try {{
+    Copy-Item -Path $newExe -Destination $oldExe -Force
+    # 删除临时文件
+    Remove-Item -Path $newExe -Force -ErrorAction SilentlyContinue
+    # 启动新版本
+    Start-Process -FilePath $oldExe
+}} catch {{
+    # 静默失败，不弹窗打扰用户
+}}
 
-echo 更新完成，正在启动新版本...
-start "" "{old_exe}"
-
-del "{new_exe}"
-del "%~f0"
+# 删除自身
+Remove-Item -Path $PSCommandPath -Force -ErrorAction SilentlyContinue
 '''
         
+        ps_path = os.path.join(app_dir, "vibepet_update.ps1")
+        
         try:
-            with open(bat_path, 'w', encoding='utf-8') as f:
-                f.write(bat_content)
+            with open(ps_path, 'w', encoding='utf-8') as f:
+                f.write(ps_script)
             
-            # 启动批处理（独立窗口，不阻塞）
+            # 用 PowerShell 隐藏窗口执行
             subprocess.Popen(
-                ['cmd', '/c', 'start', '', bat_path],
+                ['powershell', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', ps_path],
                 shell=False,
-                creationflags=subprocess.CREATE_NEW_CONSOLE
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             
             # 延迟一点再退出，让批处理有时间启动
