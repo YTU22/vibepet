@@ -19,7 +19,7 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -1074,10 +1074,10 @@ class PetWindow(QWidget):
         event.accept()
 
     def _check_for_updates(self):
-        """ 启动时检测 GitHub Releases 是否有新版本 """
+        """ 启动时检测网站 API 是否有新版本 """
         try:
             req = urllib.request.Request(
-                "https://api.github.com/repos/YTU22/vibepet/releases/latest",
+                "https://vibeharbor.art/api/github/vibepet/latest",
                 headers={"User-Agent": "VibePet-UpdateChecker"}
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
@@ -1093,10 +1093,9 @@ class PetWindow(QWidget):
                     return (0, 0, 0)
             
             if parse_ver(latest) > parse_ver(APP_VERSION):
-                url = data.get("html_url", "https://github.com/YTU22/vibepet/releases")
-                self.show_bubble_message(f"🎉 发现新版本 v{latest}！\n点击前往下载更新")
-                # 保存URL供点击使用
-                self._update_url = url
+                self._latest_version = latest
+                self.show_bubble_message(f"🎉 发现新版本 v{latest}！\n打开设置→关于 点击一键更新")
+                logger.info(f"New version available: v{latest}")
             else:
                 logger.info(f"Current version {APP_VERSION} is up to date.")
         except Exception as e:

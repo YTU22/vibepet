@@ -1,21 +1,24 @@
 import logging
 import datetime
 import json
+import os
+import sys
 import urllib.request
 import urllib.error
 import webbrowser
+import subprocess
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
     QSlider, QTabWidget, QWidget as QWidgetBase, QListWidget, QListWidgetItem,
-    QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton
+    QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton, QProgressBar
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, QColor, QFont
 
-from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
+from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -635,14 +638,59 @@ class SettingsDialog(QDialog):
         
         about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
         
-        # 检测更新按钮
+        # 检测更新区域
         about_inner.addSpacing(15)
         self.btn_check_update = QPushButton("🔍 检测更新")
         self.btn_check_update.clicked.connect(self._check_for_update)
         about_inner.addWidget(self.btn_check_update)
+        
+        # 下载进度条（默认隐藏）
+        self.progress_update = QProgressBar()
+        self.progress_update.setRange(0, 100)
+        self.progress_update.setValue(0)
+        self.progress_update.setTextVisible(True)
+        self.progress_update.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #42424a;
+                border-radius: 4px;
+                background-color: #2b2b35;
+                color: #e0e0e6;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #81c784;
+                border-radius: 4px;
+            }
+        """)
+        self.progress_update.hide()
+        about_inner.addWidget(self.progress_update)
+        
         self.lbl_update_status = QLabel("")
         self.lbl_update_status.setWordWrap(True)
         about_inner.addWidget(self.lbl_update_status)
+        
+        # 一键更新按钮（检测到新版本后才显示）
+        self.btn_onekey_update = QPushButton("⬇️ 一键下载更新")
+        self.btn_onekey_update.setStyleSheet("""
+            QPushButton {
+                background-color: #2e7d32;
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+            QPushButton:pressed {
+                background-color: #1b5e20;
+            }
+        """)
+        self.btn_onekey_update.clicked.connect(self._onekey_update)
+        self.btn_onekey_update.hide()
+        about_inner.addWidget(self.btn_onekey_update)
         
         # 开机自启动选项
         about_inner.addSpacing(10)
@@ -700,13 +748,14 @@ class SettingsDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def _check_for_update(self):
-        """ 检测 GitHub Releases 是否有新版本 """
+        """ 检测网站 API 是否有新版本 """
         self.lbl_update_status.setText("正在检测更新...")
         self.btn_check_update.setEnabled(False)
+        self.btn_onekey_update.hide()
         
         try:
             req = urllib.request.Request(
-                "https://api.github.com/repos/YTU22/vibepet/releases/latest",
+                "https://vibeharbor.art/api/github/vibepet/latest",
                 headers={"User-Agent": "VibePet-UpdateChecker"}
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
@@ -723,12 +772,12 @@ class SettingsDialog(QDialog):
                     return (0, 0, 0)
             
             if parse_ver(latest) > parse_ver(APP_VERSION):
-                url = data.get("html_url", "https://github.com/YTU22/vibepet/releases")
+                self._latest_version = latest
                 self.lbl_update_status.setText(
                     f"<span style='color:#81c784;'>发现新版本 v{latest}！</span><br>"
-                    f"<a href='{url}' style='color:#81c784;'>点击前往下载</a>"
+                    f"点击下方按钮一键下载更新。"
                 )
-                self.lbl_update_status.setOpenExternalLinks(True)
+                self.btn_onekey_update.show()
             else:
                 self.lbl_update_status.setText("<span style='color:#81c784;'>✓ 当前已是最新版本</span>")
         except urllib.error.URLError as e:
@@ -739,6 +788,159 @@ class SettingsDialog(QDialog):
             logger.warning(f"Update check error: {e}")
         finally:
             self.btn_check_update.setEnabled(True)
+
+    def _onekey_update(self):
+        """ 一键下载更新：下载新 exe → 提示用户关闭 → 启动更新器替换 """
+        self.btn_onekey_update.setEnabled(False)
+        self.btn_onekey_update.setText("正在下载...")
+        self.progress_update.show()
+        
+        # 在后台线程下载，避免阻塞 UI
+        from PyQt6.QtCore import QThread, pyqtSignal
+        
+        class DownloadThread(QThread):
+            progress = pyqtSignal(int)
+            finished = pyqtSignal(bool, str)
+            
+            def run(self):
+                try:
+                    app_dir = get_app_dir()
+                    temp_exe = os.path.join(app_dir, f"VibePet_v{self.parent()._latest_version}.exe")
+                    
+                    req = urllib.request.Request(
+                        "https://vibeharbor.art/api/github/vibepet/download-latest",
+                        headers={"User-Agent": "VibePet-Updater"}
+                    )
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        total_size = int(resp.headers.get('content-length', 0))
+                        downloaded = 0
+                        chunk_size = 8192
+                        
+                        with open(temp_exe, 'wb') as f:
+                            while True:
+                                chunk = resp.read(chunk_size)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                downloaded += len(chunk)
+                                if total_size > 0:
+                                    self.progress.emit(int(downloaded * 100 / total_size))
+                    
+                    self.finished.emit(True, temp_exe)
+                except Exception as e:
+                    self.finished.emit(False, str(e))
+        
+        self._dl_thread = DownloadThread(self)
+        self._dl_thread.progress.connect(self.progress_update.setValue)
+        self._dl_thread.finished.connect(self._on_download_finished)
+        self._dl_thread.start()
+    
+    def _on_download_finished(self, success, result):
+        """ 下载完成后处理 """
+        self.progress_update.hide()
+        self.btn_onekey_update.setEnabled(True)
+        self.btn_onekey_update.setText("⬇️ 一键下载更新")
+        
+        if not success:
+            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>下载失败: {result}</span>")
+            return
+        
+        temp_exe = result
+        current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
+        
+        # 提示用户关闭程序后开始更新
+        msg = QMessageBox(self)
+        msg.setWindowTitle("下载完成")
+        msg.setText(
+            f"新版本已下载完成！\n\n"
+            f"点击【确定】将关闭当前程序并开始安装更新。\n"
+            f"安装完成后会自动启动新版本。"
+        )
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        msg.setDefaultButton(QMessageBox.StandardButton.Ok)
+        msg.setStyleSheet("""
+            QMessageBox {
+                background-color: #1e1e24;
+                color: #ffffff;
+                font-family: "Microsoft YaHei", sans-serif;
+            }
+            QLabel {
+                color: #e0e0e6;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #37474f;
+                color: #ffffff;
+                border-radius: 4px;
+                padding: 6px 16px;
+            }
+        """)
+        
+        if msg.exec() == QMessageBox.StandardButton.Ok:
+            self._run_updater_and_exit(current_exe, temp_exe)
+    
+    def _run_updater_and_exit(self, old_exe, new_exe):
+        """ 创建批处理更新器，启动后退出当前程序 """
+        app_dir = get_app_dir()
+        bat_path = os.path.join(app_dir, "vibepet_update.bat")
+        
+        bat_content = f'''@echo off
+chcp 65001 >nul
+echo ========================================
+echo   VibePet 更新程序
+echo ========================================
+echo.
+echo 正在等待 VibePet 关闭...
+
+:wait_loop
+tasklist | findstr "VibePet.exe" >nul
+if %errorlevel% == 0 (
+    timeout /t 1 /nobreak >nul
+    goto wait_loop
+)
+
+echo 正在安装更新...
+timeout /t 2 /nobreak >nul
+
+copy /Y "{new_exe}" "{old_exe}"
+if %errorlevel% neq 0 (
+    echo.
+    echo [错误] 更新失败，请手动复制文件：
+    echo   从: {new_exe}
+    echo   到: {old_exe}
+    echo.
+    pause
+    exit /b 1
+)
+
+echo 更新完成，正在启动新版本...
+start "" "{old_exe}"
+
+del "{new_exe}"
+del "%~f0"
+'''
+        
+        try:
+            with open(bat_path, 'w', encoding='utf-8') as f:
+                f.write(bat_content)
+            
+            # 启动批处理（独立窗口，不阻塞）
+            subprocess.Popen(
+                ['cmd', '/c', 'start', '', bat_path],
+                shell=False,
+                creationflags=subprocess.CREATE_NEW_CONSOLE
+            )
+            
+            # 延迟一点再退出，让批处理有时间启动
+            QTimer.singleShot(500, self._quit_for_update)
+        except Exception as e:
+            logger.error(f"Failed to create updater: {e}")
+            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>更新失败: {e}</span>")
+    
+    def _quit_for_update(self):
+        """ 退出程序以便更新器替换 exe """
+        from PyQt6.QtWidgets import QApplication
+        QApplication.quit()
 
     def load_values(self):
         """ Read config manager and populate form elements """
