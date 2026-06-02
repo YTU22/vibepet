@@ -19,7 +19,7 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -565,7 +565,33 @@ class PetWindow(QWidget):
         logger.info(f"Pet size changed to {size}px, window: {window_width}x{window_height}px")
 
     def load_animation(self, state_name):
-        """ 加载静态PNG宠物图片，配合代码实现的动态效果 """
+        """ 加载 GIF 动态图，若不存在则回退至静态 PNG 宠物图片 """
+        from PyQt6.QtGui import QMovie
+        
+        # 1. 尝试加载 GIF 动画
+        gif_path = resource_path(f"assets/{state_name}.gif")
+        if os.path.exists(gif_path):
+            # 停止当前可能正在播放的 QMovie
+            old_movie = self.pet_label.movie()
+            if old_movie:
+                old_movie.stop()
+                
+            movie = QMovie(gif_path)
+            # 设置缩放以适配当前宠物大小
+            movie.setScaledSize(self.pet_label.size())
+            self.pet_label.setMovie(movie)
+            movie.start()
+            self.current_state = state_name
+            # self.update_mask_region()
+            logger.info(f"[动画加载] 成功加载并播放 GIF 动画: {gif_path}")
+            return
+
+        # 2. 如果 GIF 不存在，回退到静态 PNG 模式
+        old_movie = self.pet_label.movie()
+        if old_movie:
+            old_movie.stop()
+            self.pet_label.setMovie(None)
+
         img_path = resource_path(f"assets/pet_{state_name}.png")
         pixmap = QPixmap()
         load_ok = False

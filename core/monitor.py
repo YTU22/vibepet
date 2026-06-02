@@ -27,6 +27,7 @@ class MonitorThread(QThread):
         self.reminder = reminder_manager
         
         self._running = True
+        self._hook = None
         
         # Memory cache for active usage accumulation
         # Key: (process_name, category), Value: duration in seconds
@@ -55,6 +56,96 @@ class MonitorThread(QThread):
         # Load initial values from DB
         self.sync_today_totals_from_db()
 
+        # 初始化前台窗口检测与事件钩子
+        self._active_process_name = self._lookup_foreground_process()
+        self.current_app = normalize_process_name(self._active_process_name)
+        self.current_category = self.config.get_category_for_app(self.current_app)
+        
+        # 注册事件钩子
+        self._register_event_hook()
+
+    def __del__(self):
+        self._unregister_event_hook()
+
+    def _register_event_hook(self):
+        """ 注册全局前台窗口切换事件钩子 """
+        import ctypes
+        import ctypes.wintypes
+        
+        EVENT_SYSTEM_FOREGROUND = 0x0003
+        WINEVENT_OUTOFCONTEXT = 0x0000
+        
+        user32 = ctypes.windll.user32
+        
+        # 定义回调函数类型
+        self._cb_type = ctypes.WINFUNCTYPE(
+            None,
+            ctypes.wintypes.HANDLE,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.HWND,
+            ctypes.wintypes.LONG,
+            ctypes.wintypes.LONG,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD
+        )
+        
+        # 实例化回调函数并保持引用防止垃圾回收
+        self._cb_func = self._cb_type(self._win_event_proc)
+        
+        self._hook = user32.SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            0,
+            self._cb_func,
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT
+        )
+        if self._hook:
+            logger.info("SetWinEventHook registered successfully for EVENT_SYSTEM_FOREGROUND.")
+        else:
+            logger.error("Failed to register SetWinEventHook.")
+
+    def _unregister_event_hook(self):
+        """ 注销全局前台窗口切换事件钩子 """
+        if hasattr(self, '_hook') and self._hook:
+            import ctypes
+            user32 = ctypes.windll.user32
+            user32.UnhookWinEvent(self._hook)
+            self._hook = None
+            logger.info("SetWinEventHook unregistered successfully.")
+
+    def _win_event_proc(self, hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime):
+        """ Windows 前台窗口变更回调 """
+        EVENT_SYSTEM_FOREGROUND = 0x0003
+        if event == EVENT_SYSTEM_FOREGROUND:
+            name = self._lookup_foreground_process_by_hwnd(hwnd)
+            self._active_process_name = name
+
+    def _lookup_foreground_process_by_hwnd(self, hwnd):
+        """ 根据窗口句柄查找进程名 """
+        if not hwnd:
+            return "unknown"
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid == 0:
+                return "unknown"
+            try:
+                proc = psutil.Process(pid)
+                return proc.name()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                return "unknown"
+        except Exception:
+            return "unknown"
+
+    def _lookup_foreground_process(self):
+        """ 查找当前的前台窗口进程名 """
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            return self._lookup_foreground_process_by_hwnd(hwnd)
+        except Exception:
+            return "unknown"
+
     def sync_today_totals_from_db(self):
         """ Reload today's usage statistics from database """
         try:
@@ -67,6 +158,8 @@ class MonitorThread(QThread):
 
     def stop(self):
         self._running = False
+        # 注销全局事件钩子
+        self._unregister_event_hook()
         # Save remaining cache before exit
         self.flush_cache_to_db()
 
@@ -92,25 +185,10 @@ class MonitorThread(QThread):
             return 0.0
 
     def get_foreground_process_name(self):
-        """ Retrieve the process name of the active foreground window """
-        try:
-            hwnd = win32gui.GetForegroundWindow()
-            if not hwnd:
-                return "unknown"
-                
-            _, pid = win32process.GetWindowThreadProcessId(hwnd)
-            if pid == 0:
-                return "unknown"
-                
-            # Use psutil to look up process name
-            try:
-                proc = psutil.Process(pid)
-                return proc.name()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                return "unknown"
-        except Exception as e:
-            # Avoid crashing, just return unknown
-            return "unknown"
+        """ Directly retrieve the cached foreground process name """
+        if not hasattr(self, '_active_process_name'):
+            self._active_process_name = self._lookup_foreground_process()
+        return self._active_process_name
 
     def flush_cache_to_db(self):
         """ Flush accumulated memory usage to SQLite """
