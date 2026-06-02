@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.9"
+APP_VERSION = "1.2.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -108,9 +108,9 @@ class PetWindow(QWidget):
 
         # 从配置读取宠物尺寸（默认200）
         self.pet_size = self.config.get("pet_size", 200)
-        # 气泡区域高度：为宠物尺寸的 50%，且至少为 80px
-        self.bubble_height = max(80, int(self.pet_size * 0.5))
-        window_width = int(self.pet_size * 1.5)
+        # 气泡区域高度与整体尺寸优化：进一步减少透明窗口对操作的占用，缩小 footprint
+        self.bubble_height = max(20, int(self.pet_size * 0.10))
+        window_width = int(self.pet_size * 1.20)
         window_height = self.pet_size + self.bubble_height
         # 确保窗口尺寸不超过屏幕可用区域
         from PyQt6.QtWidgets import QApplication
@@ -136,13 +136,16 @@ class PetWindow(QWidget):
         self._drag_start_pos = QPoint()  # 拖拽起始位置
         self.is_snapped = False          # 是否处于贴边隐藏状态
         self.snap_edge = None            # 贴在左侧还是右侧 ("left" / "right")
+        self._hidden_for_snipaste = False
+        self._todo_was_visible_before_snipaste = False
+
+        # Initialize default animation state early for UI setup
+        self.current_state = "idle"
 
         self.setup_ui()
         self.setup_tray()
         self.setup_animations()
 
-        # Initialize default animation state
-        self.current_state = "idle"
         self.load_animation(self.current_state)
 
         # Positioning: Bottom right corner of screen
@@ -208,17 +211,11 @@ class PetWindow(QWidget):
         # 修复：监控气泡支持动态自适应宽度，初始居中定位，右上方偏移
         self.app_bubble = QLabel(self)
         self.app_bubble.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.app_bubble.setFont(QFont("Microsoft YaHei", 9))  # 字体改为9px
+        font_size = self.config.get("app_bubble_font_size", 9)
+        self.app_bubble.setFont(QFont("Microsoft YaHei", font_size))
         
         self.app_bubble.setText("📊 当前: 初始化...")
-        self.app_bubble.adjustSize()
-        w = max(100, min(window_width - 20, self.app_bubble.width() + 12))
-        app_bubble_right = min(window_width - 10, pet_x + self.pet_size + 10)
-        app_bubble_x = max(10, app_bubble_right - w)
-        app_bubble_y = self.bubble_height - 30
-        self.app_bubble.setGeometry(app_bubble_x, app_bubble_y, w, 24)
-        
-        # 应用气泡透明度（初始）
+        # 初始定位会在 load_animation 中通过 reposition_components() 动态覆盖
         self._apply_bubble_opacity()
         # Load visibility settings from config
         self.show_app_bubble_enabled = self.config.get("show_app_bubble", True)
@@ -394,11 +391,8 @@ class PetWindow(QWidget):
         if lines:
             self.sys_panel.setText("<br>".join(lines))
             self.sys_panel.adjustSize()
-            # 定位：宠物左侧，垂直居中
-            panel_x = 5
-            panel_y = self.bubble_height + (self.pet_size - self.sys_panel.height()) // 2
-            self.sys_panel.setGeometry(panel_x, panel_y, self.sys_panel.width(), self.sys_panel.height())
             self.sys_panel.show()
+            self.reposition_components()
         else:
             self.sys_panel.hide()
     
@@ -545,9 +539,10 @@ class PetWindow(QWidget):
             self.unsnap_window(animate=False)
         size = max(80, min(400, size))  # 限制范围 80~400
         self.pet_size = size
-        self.bubble_height = max(80, int(size * 0.5))
+        # 气泡区域高度与整体尺寸优化：使用超紧凑的 10% 占比基础高度，减少对日常操作的遮挡
+        self.bubble_height = max(20, int(size * 0.10))
         
-        window_width = int(size * 1.5)
+        window_width = int(size * 1.20)
         window_height = size + self.bubble_height
         
         # 确保窗口尺寸不超过屏幕可用区域
@@ -558,30 +553,104 @@ class PetWindow(QWidget):
         
         self.resize(window_width, window_height)
 
-        # 重新调整各组件几何位置
-        pet_x = (window_width - size) // 2
-        self.pet_label.setGeometry(pet_x, self.bubble_height, size, size)
-
-        # 重新调整监控气泡大小和位置，防止超出窗口被裁剪
-        self.app_bubble.adjustSize()
-        w = max(100, min(window_width - 20, self.app_bubble.width() + 12))
-        app_bubble_right = min(window_width - 10, pet_x + size + 10)
-        app_bubble_x = max(10, app_bubble_right - w)
-        app_bubble_y = self.bubble_height - 30
-        self.app_bubble.setGeometry(app_bubble_x, app_bubble_y, w, 24)
+        # 重新调整各组件几何位置与大小适配
+        self.reposition_components()
 
         # 确保窗口仍在屏幕可视区域内
         self.ensure_visible_on_screen()
 
         # 重新加载当前动画以适配新尺寸
         self.load_animation(self.current_state)
-        # 禁用setMask避免窗口不可见
-        # self.update_mask_region()
         logger.info(f"Pet size changed to {size}px, window: {window_width}x{window_height}px")
+
+    def reposition_components(self):
+        """ 根据当前宠物大小和图片可视边缘比例，重新布局所有子组件 """
+        from PyQt6.QtCore import QSize
+        
+        window_width = self.width()
+        window_height = self.height()
+        
+        # 1. 查找当前状态的原贴图可视边界比例 (left, top, right, bottom)
+        # 避免去裁剪磁盘上的原始资产（防打包下透明背景变黑异常），采用代码级比例规避
+        gif_paddings = {
+            "angry": (0.220, 0.187, 0.873, 0.907),
+            "happy": (0.253, 0.280, 0.780, 0.907),
+            "idle": (0.253, 0.373, 0.780, 0.907),
+            "sleep": (0.187, 0.280, 1.000, 0.907),
+            "tired": (0.220, 0.313, 0.813, 0.907),
+            "work": (0.253, 0.373, 0.780, 0.907),
+        }
+        png_paddings = {
+            "angry": (0.136, 0.108, 0.909, 0.860),
+            "happy": (0.052, 0.077, 0.965, 0.850),
+            "idle": (0.115, 0.220, 0.885, 0.871),
+            "sleep": (0.059, 0.063, 1.000, 0.853),
+            "tired": (0.077, 0.087, 0.990, 0.860),
+            "work": (0.098, 0.080, 0.969, 0.871),
+        }
+        
+        gif_path = resource_path(f"assets/{self.current_state}.gif")
+        if os.path.exists(gif_path):
+            paddings = gif_paddings
+        else:
+            paddings = png_paddings
+            
+        left_frac, top_frac, right_frac, bottom_frac = paddings.get(
+            self.current_state, (0.253, 0.373, 0.780, 0.907)
+        )
+        
+        # 2. 定位 pet_label (居中放置，保持 original 的 1:1 比例防止拉伸变形)
+        pet_x = (window_width - self.pet_size) // 2
+        pet_y = self.bubble_height
+        
+        self.pet_label.setFixedSize(self.pet_size, self.pet_size)
+        self.pet_label.setGeometry(pet_x, pet_y, self.pet_size, self.pet_size)
+        
+        movie = self.pet_label.movie()
+        if movie:
+            movie.setScaledSize(QSize(self.pet_size, self.pet_size))
+            
+        # 3. 计算宠物本体实际在窗口中的可视坐标边界
+        head_top = pet_y + int(self.pet_size * top_frac)
+        head_right = pet_x + int(self.pet_size * right_frac)
+        head_left = pet_x + int(self.pet_size * left_frac)
+        
+        # 4. 定位监控气泡 app_bubble (紧贴宠物实际头顶右上方)
+        font_size = self.config.get("app_bubble_font_size", 9)
+        app_bubble_h = font_size + 14
+        self.app_bubble.adjustSize()
+        app_bubble_w = max(80, min(window_width - 6, self.app_bubble.width() + 12))
+        
+        # 右侧对齐宠物右部可视边缘，紧贴头顶，不超出窗口边界
+        app_bubble_right = min(window_width - 2, head_right + 3)
+        app_bubble_x = max(2, app_bubble_right - app_bubble_w)
+        # 紧贴宠物头顶上方，仅留 1px 间距；允许部分覆盖宠物上沿
+        app_bubble_y = max(0, head_top - app_bubble_h - 1)
+        self.app_bubble.setGeometry(app_bubble_x, app_bubble_y, app_bubble_w, app_bubble_h)
+        
+        # 5. 定位普通对话气泡 bubble (紧贴宠物实际正头顶居中)
+        if self.bubble.isVisible():
+            bubble_w = self.bubble.width()
+            bubble_h = self.bubble.height()
+            bubble_x = (window_width - bubble_w) // 2
+            bubble_y = head_top - bubble_h - 5
+            self.bubble.setGeometry(bubble_x, max(0, bubble_y), bubble_w, bubble_h)
+            
+        # 6. 定位系统监控面板 sys_panel (紧贴宠物实际左侧，垂直居中)
+        if hasattr(self, 'sys_panel') and self.sys_panel.isVisible():
+            # 放置在可视左边缘左侧，间距 4px
+            panel_right = head_left - 4
+            panel_x = max(5, panel_right - self.sys_panel.width())
+            
+            # 垂直居中于宠物本体可视高度区域内
+            pet_visible_h = int(self.pet_size * (bottom_frac - top_frac))
+            panel_y = head_top + (pet_visible_h - self.sys_panel.height()) // 2
+            self.sys_panel.setGeometry(panel_x, panel_y, self.sys_panel.width(), self.sys_panel.height())
 
     def load_animation(self, state_name):
         """ 加载 GIF 动态图，若不存在则回退至静态 PNG 宠物图片 """
         from PyQt6.QtGui import QMovie
+        from PyQt6.QtCore import QSize
         
         # 1. 尝试加载 GIF 动画
         gif_path = resource_path(f"assets/{state_name}.gif")
@@ -592,12 +661,15 @@ class PetWindow(QWidget):
                 old_movie.stop()
                 
             movie = QMovie(gif_path)
-            # 设置缩放以适配当前宠物大小
-            movie.setScaledSize(self.pet_label.size())
+            # 设置缩放为 1:1 匹配 pet_size
+            movie.setScaledSize(QSize(self.pet_size, self.pet_size))
             self.pet_label.setMovie(movie)
-            movie.start()
             self.current_state = state_name
-            # self.update_mask_region()
+            
+            # Reposition/resize dynamically
+            self.reposition_components()
+            
+            movie.start()
             logger.info(f"[动画加载] 成功加载并播放 GIF 动画: {gif_path}")
             return
 
@@ -623,13 +695,10 @@ class PetWindow(QWidget):
         if not load_ok:
             logger.warning(f"[图片加载] 创建红色占位块: {img_path}")
             pixmap = QPixmap(self.pet_size, self.pet_size)
-            # 亮红色背景，绝对肉眼可见
             pixmap.fill(QColor("#FF4444"))
 
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            # 白色文字提示
             painter.setPen(QColor("#FFFFFF"))
             font_size = max(12, int(self.pet_size * 0.08))
             font = QFont("Microsoft YaHei", font_size, QFont.Weight.Bold)
@@ -637,7 +706,7 @@ class PetWindow(QWidget):
             painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "图片缺失")
             painter.end()
         else:
-            # Smooth scaling to fit pet area while maintaining aspect ratio
+            # Scale statically to 1:1 square
             pixmap = pixmap.scaled(
                 self.pet_size, self.pet_size,
                 Qt.AspectRatioMode.KeepAspectRatio,
@@ -645,10 +714,8 @@ class PetWindow(QWidget):
             )
 
         self.pet_label.setPixmap(pixmap)
-        self.pet_label.setFixedSize(self.pet_size, self.pet_size)
         self.current_state = state_name
-        # 关键修复：暂时禁用setMask，它可能导致窗口完全不可见
-        # self.update_mask_region()
+        self.reposition_components()
         logger.info(f"[load_animation] 完成，pixmap尺寸: {pixmap.size()}")
 
     @pyqtSlot()
@@ -667,6 +734,11 @@ class PetWindow(QWidget):
         # 从配置读取气泡透明度（默认1.0=不透明）
         opacity = self.config.get("bubble_opacity", 1.0)
         alpha = int(opacity * 255)
+        font_size = self.config.get("app_bubble_font_size", 9)
+        
+        # 显式设置组件字体字号
+        self.app_bubble.setFont(QFont("Microsoft YaHei", font_size))
+        
         is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             self.bubble.setStyleSheet(f"""
@@ -685,7 +757,7 @@ class PetWindow(QWidget):
                     border: 1px solid #42424a;
                     border-radius: 6px;
                     padding: 2px;
-                    font-size: 9px;
+                    font-size: {font_size}px;
                 }}
             """)
         else:
@@ -705,9 +777,11 @@ class PetWindow(QWidget):
                     border: 1px solid #cccccc;
                     border-radius: 6px;
                     padding: 2px;
-                    font-size: 9px;
+                    font-size: {font_size}px;
                 }}
             """)
+
+        self.reposition_components()
 
     def show_bubble_message(self, text):
         """ Trigger floating bubble animation with text """
@@ -751,16 +825,11 @@ class PetWindow(QWidget):
         # 固定几何尺寸
         self.bubble.setFixedSize(w, h)
 
-        # 水平居中对齐，保证气泡在窗口内部且视觉上平衡对称
-        bubble_x = (window_width - w) // 2
-        # 垂直位置在宠物上方，间距 5px
-        bubble_y = self.bubble_height - h - 5
-        self.bubble.setGeometry(bubble_x, max(0, bubble_y), w, h)
-
         # 应用当前透明度设置
         self._apply_bubble_opacity()
 
         self.bubble.show()
+        self.reposition_components()
 
         # Stop active animation group if running
         if hasattr(self, "_bubble_anim_group") and self._bubble_anim_group:
@@ -1211,10 +1280,9 @@ class PetWindow(QWidget):
         if not self.config.get("screen_snapping", True) and getattr(self, "is_snapped", False):
             self.unsnap_window(animate=False)
 
-        # 重新加载尺寸
+        # 重新加载尺寸与气泡布局
         new_size = self.config.get("pet_size", 200)
-        if new_size != self.pet_size:
-            self.set_pet_size(new_size)
+        self.set_pet_size(new_size)
 
         # 重新加载锁定状态
         self.window_locked = self.config.get("window_locked", False)
@@ -1271,6 +1339,29 @@ class PetWindow(QWidget):
     @pyqtSlot(str, str, bool, int, int)
     def on_status_updated(self, app_name, category, is_idle, today_total_s, today_game_s):
         """ Handle status updates from the monitor thread """
+        # 0. Snipaste 截图冲突处理
+        is_snipaste = (app_name.lower() == "snipaste")
+        if is_snipaste:
+            if not self._hidden_for_snipaste:
+                self._hidden_for_snipaste = True
+                self._todo_was_visible_before_snipaste = self.todo_window is not None and self.todo_window.isVisible()
+                # 隐藏桌宠与便签窗口
+                self.hide()
+                if self.todo_window:
+                    self.todo_window.hide()
+                logger.info("[Snipaste 冲突规避] 检测到 Snipaste 启动，临时隐藏桌宠及便签")
+            # 即使在 snipaste 运行期间，直接返回，不更新 UI
+            return
+        else:
+            if self._hidden_for_snipaste:
+                self._hidden_for_snipaste = False
+                # 恢复显示桌宠
+                self.show()
+                # 恢复显示便签窗口（如果之前是可见的）
+                if self._todo_was_visible_before_snipaste and self.todo_window:
+                    self.todo_window.show()
+                logger.info("[Snipaste 冲突规避] Snipaste 退出，恢复桌宠及便签显示")
+
         # 1. Update system tray hover tooltip
         self.tray.update_tooltip(today_total_s, today_game_s)
 
@@ -1282,17 +1373,8 @@ class PetWindow(QWidget):
 
         self.app_bubble.setText(text)
         
-        # 动态自适应调整大小 and 位置，防止进程名过长时气泡显示不全
-        self.app_bubble.adjustSize()
-        window_width = self.width()
-        pet_x = self.pet_label.x()
-        
-        w = max(100, min(window_width - 20, self.app_bubble.width() + 12))
-        # 尽量让 app_bubble 右端与宠物右端对齐偏移 10px，但不能超出右窗口边界
-        app_bubble_right = min(window_width - 10, pet_x + self.pet_size + 10)
-        app_bubble_x = max(10, app_bubble_right - w)
-        app_bubble_y = self.bubble_height - 30
-        self.app_bubble.setGeometry(app_bubble_x, app_bubble_y, w, 24)
+        # 动态自适应调整大小 and 位置
+        self.reposition_components()
 
         if getattr(self, "is_snapped", False):
             self.app_bubble.hide()
@@ -1303,9 +1385,13 @@ class PetWindow(QWidget):
         msg.finished.connect(lambda: self.active_dialogs.remove(msg))
         msg.setWindowTitle("关于 VibePet")
         
-        # 设置窗口图标
+        # 设置窗口图标（优先 .ico 格式）
+        ico_path = resource_path("assets/icon.ico")
         icon_path = resource_path("assets/icon.png")
-        msg.setWindowIcon(QIcon(icon_path))
+        if os.path.exists(ico_path):
+            msg.setWindowIcon(QIcon(ico_path))
+        elif os.path.exists(icon_path):
+            msg.setWindowIcon(QIcon(icon_path))
         
         # 设置对话框主体图标
         pixmap = QPixmap(icon_path)
@@ -1331,6 +1417,15 @@ class PetWindow(QWidget):
     def trigger_fatigue_warning(self):
         """ Forceful warning dialog for daily overtime """
         msg = QMessageBox(None)
+        
+        # 设置窗口图标（优先使用 .ico 格式以确保 Windows 标题栏左上角正确显示）
+        ico_path = resource_path("assets/icon.ico")
+        icon_path = resource_path("assets/icon.png")
+        if os.path.exists(ico_path):
+            msg.setWindowIcon(QIcon(ico_path))
+        elif os.path.exists(icon_path):
+            msg.setWindowIcon(QIcon(icon_path))
+        
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setWindowTitle("VibePet 健康警告")
         msg.setText("您今日累计使用电脑已超过 8 小时！\n建议您现在离开电脑，闭眼休息 10 分钟或起身活动活动！")

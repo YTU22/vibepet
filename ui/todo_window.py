@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QScrollArea, QCheckBox, QGraphicsDropShadowEffect, QApplication,
     QSizePolicy, QMessageBox
 )
-from PyQt6.QtCore import Qt, QPoint, pyqtSlot
+from PyQt6.QtCore import Qt, QPoint, pyqtSlot, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QFont, QColor
 
 logger = logging.getLogger("vibe_pet")
@@ -91,6 +91,11 @@ class TodoWindow(QWidget):
         self.setFixedSize(260, 320)
         self.drag_position = QPoint()
         self._is_dragging = False
+
+        # 贴边隐藏相关状态
+        self.is_snapped = False
+        self.snap_edge = None
+        self.snap_animation = None
 
         self.setup_ui()
         self.load_position()
@@ -436,9 +441,13 @@ class TodoWindow(QWidget):
         if main_win and hasattr(main_win, 'on_todo_window_toggled'):
             main_win.on_todo_window_toggled(False)
 
-    # --- 鼠标拖拽功能 ---
+    # --- 鼠标拖拽与贴边隐藏功能 ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if getattr(self, "is_snapped", False):
+                self.unsnap_window()
+                event.accept()
+                return
             # 仅允许在标题栏或图钉区域进行拖动
             # 便签窗口卡片高度300，最上方30px为标题区域
             local_pos = event.position().toPoint()
@@ -455,8 +464,136 @@ class TodoWindow(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self._is_dragging:
             self._is_dragging = False
-            # 保存坐标到配置中
+            self.check_and_snap()
+            event.accept()
+
+    def check_and_snap(self):
+        """ 检测窗口是否靠近屏幕左右边缘并触发贴边收缩 """
+        if not self.config.get("screen_snapping", True):
+            # 如果没有启用贴边隐藏，仅保存位置
             self.config.set("todo_x", self.x())
             self.config.set("todo_y", self.y())
-            event.accept()
-            logger.info(f"[便签] 拖拽完成，位置保存到 ({self.x()}, {self.y()})")
+            logger.info(f"[便签] 拖拽完成（未启用贴边隐藏），位置保存到 ({self.x()}, {self.y()})")
+            return
+
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        
+        win_x = self.x()
+        win_width = self.width()
+        
+        dist_left = win_x - screen.x()
+        dist_right = (screen.x() + screen.width()) - (win_x + win_width)
+        
+        # 贴边检测阈值：20 像素
+        threshold = 20
+        # 收缩后露出的像素：15 像素
+        sliver = 15
+        
+        # 这里的卡片偏移为 card_x = 10，右边界偏移为 10 + 240 = 250
+        card_x = 10
+        card_right = 250
+        
+        if dist_left < threshold:
+            # 贴左侧：露出 card 右端 sliver 像素
+            target_x = screen.x() + sliver - card_right
+            self.snap_to_edge("left", target_x)
+        elif dist_right < threshold:
+            # 贴右侧：露出 card 左端 sliver 像素
+            target_x = (screen.x() + screen.width()) - sliver - card_x
+            self.snap_to_edge("right", target_x)
+        else:
+            # 未贴边：保存当前坐标
+            self.config.set("todo_x", self.x())
+            self.config.set("todo_y", self.y())
+            logger.info(f"[便签] 拖拽完成（未贴边），位置保存到 ({self.x()}, {self.y()})")
+
+    def snap_to_edge(self, edge, target_x):
+        """ 播放贴边收缩动画并设置状态 """
+        self.is_snapped = True
+        self.snap_edge = edge
+        
+        # 播放滑动动画
+        self.snap_animation = QPropertyAnimation(self, b"pos")
+        self.snap_animation.setDuration(300)
+        self.snap_animation.setStartValue(self.pos())
+        self.snap_animation.setEndValue(QPoint(int(target_x), self.y()))
+        self.snap_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+        
+        def on_finished():
+            self.move(int(target_x), self.y())
+            logger.info(f"[便签贴边隐藏] 便签成功贴边收缩到 {edge} 侧 (x={self.x()})")
+            
+        self.snap_animation.finished.connect(on_finished)
+        self.snap_animation.start()
+
+    def unsnap_window(self, animate=True):
+        """ 展开贴边隐藏状态，滑出还原窗口 """
+        if not getattr(self, "is_snapped", False):
+            return
+
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        
+        card_x = 10
+        card_w = 240
+        
+        if self.snap_edge == "left":
+            # 还原到左边缘对齐（card 的左侧对齐屏幕左边缘，即 window_x = screen_x - card_x）
+            target_x = screen.x() - card_x
+        else:
+            # 还原到右边缘对齐（card 的右侧对齐屏幕右边缘，即 window_x = screen_x + screen_w - (card_x + card_w)）
+            target_x = (screen.x() + screen.width()) - (card_x + card_w)
+            
+        # 限制在屏幕内，防止超出
+        target_x = max(screen.x(), min(target_x, screen.x() + screen.width() - self.width()))
+        
+        if animate:
+            self.snap_animation = QPropertyAnimation(self, b"pos")
+            self.snap_animation.setDuration(300)
+            self.snap_animation.setStartValue(self.pos())
+            self.snap_animation.setEndValue(QPoint(int(target_x), self.y()))
+            self.snap_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+            
+            def on_finished():
+                self.move(int(target_x), self.y())
+                self.is_snapped = False
+                self.snap_edge = None
+                self.config.set("todo_x", self.x())
+                self.config.set("todo_y", self.y())
+                logger.info("[便签贴边隐藏] 便签还原展开")
+                
+            self.snap_animation.finished.connect(on_finished)
+            self.snap_animation.start()
+        else:
+            self.move(int(target_x), self.y())
+            self.is_snapped = False
+            self.snap_edge = None
+            self.config.set("todo_x", self.x())
+            self.config.set("todo_y", self.y())
+            logger.info("[便签贴边隐藏] 便签无动画直接展开")
+
+    def paintEvent(self, event):
+        """ 自绘窗口背景：在贴边隐藏状态下，绘制几乎透明（alpha=1）的背景以捕获点击 """
+        super().paintEvent(event)
+        if getattr(self, "is_snapped", False):
+            from PyQt6.QtGui import QPainter, QColor
+            painter = QPainter(self)
+            # 使用 alpha = 1 的颜色填充屏幕上可见的区域，确保能捕获点击
+            fill_color = QColor(0, 0, 0, 1)
+            
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().availableGeometry()
+            win_x = self.x()
+            
+            if self.snap_edge == "left":
+                # 贴左侧，可见部分在窗口右侧
+                start_x = max(0, screen.x() - win_x)
+                w = self.width() - start_x
+                if w > 0:
+                    painter.fillRect(start_x, 0, w, self.height(), fill_color)
+            elif self.snap_edge == "right":
+                # 贴右侧，可见部分在窗口左侧
+                w = max(0, (screen.x() + screen.width()) - win_x)
+                if w > 0:
+                    painter.fillRect(0, 0, w, self.height(), fill_color)

@@ -32,11 +32,23 @@ def clean():
         # 删除文件夹模式输出
         vp_folder = os.path.join(dist_dir, "VibePet")
         if os.path.exists(vp_folder):
-            try:
-                shutil.rmtree(vp_folder)
-                removed.append("dist/VibePet/")
-            except Exception as e:
-                print(f"警告：删除 dist/VibePet/ 目录失败。错误: {e}")
+            # 仅清理构建生成的文件，保留用户配置和数据
+            preserved_files = {"config.json", "usage.db", "vibe_pet.log", "vibe_pet.lock"}
+            cleaned_any = False
+            for item in os.listdir(vp_folder):
+                if item in preserved_files:
+                    continue
+                item_path = os.path.join(vp_folder, item)
+                try:
+                    if os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                    else:
+                        os.remove(item_path)
+                    cleaned_any = True
+                except Exception as e:
+                    print(f"警告：删除 {item} 失败。该文件可能正被运行的进程锁定。错误: {e}")
+            if cleaned_any:
+                removed.append("dist/VibePet/ (清理了旧二进制文件，保留了配置文件和数据库)")
                 
         # 删除单文件 exe
         vp_exe = os.path.join(dist_dir, "VibePet.exe")

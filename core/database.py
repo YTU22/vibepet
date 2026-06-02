@@ -288,6 +288,17 @@ class DatabaseManager:
             logger.error(f"Error getting all todos: {e}")
             return []
 
+    def get_uncompleted_todos(self):
+        """ 获取所有未完成的待办事项，按ID倒序 """
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute("SELECT id, content, completed, created_at FROM todo WHERE completed = 0 ORDER BY id DESC")
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting uncompleted todos: {e}")
+            return []
+
+
     def add_todo(self, content):
         """ 添加一条新的待办事项 """
         if not content:

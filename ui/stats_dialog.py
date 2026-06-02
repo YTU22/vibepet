@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTabWidget, 
     QWidget, QMessageBox, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QAbstractItemView, QStackedWidget, QDateEdit,
-    QCalendarWidget
+    QCalendarWidget, QCheckBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QDate
 from PyQt6.QtGui import QColor, QBrush, QPen, QPainter, QIcon, QPixmap
@@ -172,7 +172,39 @@ class StatsDialog(QDialog):
         
         self.tab_widget.addTab(self.tab_pie, "分类占比")
         
-        # Tab 3: Completed Todos (待办日记)
+        # Tab 3: Pending Todos (待办清单)
+        self.tab_pending_todo = QWidget()
+        pending_todo_layout = QVBoxLayout(self.tab_pending_todo)
+        pending_todo_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.todo_pending_table = QTableWidget()
+        self.todo_pending_table.setColumnCount(4)
+        self.todo_pending_table.setHorizontalHeaderLabels(["状态", "任务内容", "创建时间", "操作"])
+        self.todo_pending_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.todo_pending_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.todo_pending_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.todo_pending_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.todo_pending_table.setColumnWidth(0, 80)
+        self.todo_pending_table.setColumnWidth(2, 160)
+        self.todo_pending_table.setColumnWidth(3, 80)
+        self.todo_pending_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.todo_pending_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.todo_pending_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.todo_pending_table.setAlternatingRowColors(True)
+        self.todo_pending_table.verticalHeader().setVisible(False)
+        pending_todo_layout.addWidget(self.todo_pending_table)
+        
+        pending_bottom_layout = QHBoxLayout()
+        self.btn_batch_delete_pending = QPushButton("批量删除所选")
+        self.btn_batch_delete_pending.setObjectName("BtnBatchDeletePending")
+        self.btn_batch_delete_pending.clicked.connect(self.batch_delete_pending_todos)
+        pending_bottom_layout.addWidget(self.btn_batch_delete_pending)
+        pending_bottom_layout.addStretch()
+        pending_todo_layout.addLayout(pending_bottom_layout)
+        
+        self.tab_widget.addTab(self.tab_pending_todo, "待办清单")
+        
+        # Tab 4: Completed Todos (待办日记)
         self.tab_todo = QWidget()
         todo_layout = QVBoxLayout(self.tab_todo)
         todo_layout.setContentsMargins(10, 10, 10, 10)
@@ -189,9 +221,18 @@ class StatsDialog(QDialog):
         self.todo_table.setColumnWidth(3, 80)
         self.todo_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.todo_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.todo_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.todo_table.setAlternatingRowColors(True)
         self.todo_table.verticalHeader().setVisible(False)
         todo_layout.addWidget(self.todo_table)
+        
+        completed_bottom_layout = QHBoxLayout()
+        self.btn_batch_delete_completed = QPushButton("批量删除所选")
+        self.btn_batch_delete_completed.setObjectName("BtnBatchDeleteCompleted")
+        self.btn_batch_delete_completed.clicked.connect(self.batch_delete_completed_todos)
+        completed_bottom_layout.addWidget(self.btn_batch_delete_completed)
+        completed_bottom_layout.addStretch()
+        todo_layout.addLayout(completed_bottom_layout)
         
         self.tab_widget.addTab(self.tab_todo, "待办日记")
         
@@ -229,6 +270,7 @@ class StatsDialog(QDialog):
         self.update_bar_chart()
         self.update_pie_chart()
         self.update_todo_list()
+        self.update_todo_pending_list()
 
     def delete_todo_from_stats(self, todo_id):
         """ 从统计看板删除待办记录 """
@@ -257,6 +299,7 @@ class StatsDialog(QDialog):
             status_text = "📁 已归档" if todo.get("archived") else "✅ 已完成"
             status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            status_item.setData(Qt.ItemDataRole.UserRole, todo["id"]) # For batch deletion
             self.todo_table.setItem(row_idx, 0, status_item)
             
             # 2. 任务内容
@@ -508,6 +551,32 @@ class StatsDialog(QDialog):
             from PyQt6.QtWidgets import QToolTip
             QToolTip.hideText()
 
+    def on_pie_hovered(self, slice_obj, status):
+        """ 处理饼图切片悬停事件，显示提示框 """
+        if status:
+            pct = slice_obj.percentage() * 100
+            total_seconds = int(slice_obj.value())
+            hours = total_seconds // 3600
+            mins = (total_seconds % 3600) // 60
+            secs = total_seconds % 60
+            
+            duration_str = ""
+            if hours > 0:
+                duration_str += f"{hours}小时"
+            if mins > 0 or hours > 0:
+                duration_str += f"{mins}分钟"
+            duration_str += f"{secs}秒"
+            
+            from PyQt6.QtWidgets import QToolTip
+            from PyQt6.QtGui import QCursor
+            
+            label_title = slice_obj.label().split(' ')[0]
+            tooltip_text = f"<b>分类:</b> {label_title}<br/><b>时长:</b> {duration_str}<br/><b>比例:</b> {pct:.1f}%"
+            QToolTip.showText(QCursor.pos(), tooltip_text, self.pie_view)
+        else:
+            from PyQt6.QtWidgets import QToolTip
+            QToolTip.hideText()
+
     def update_pie_chart(self):
         """ Fetch categories usage and render pie chart """
         self.pie_chart.removeAllSeries()
@@ -597,17 +666,21 @@ class StatsDialog(QDialog):
         text_color = QColor("#ffffff") if is_dark else QColor("#333333")
         label_color = QColor("#cfd8dc") if is_dark else QColor("#555555")
 
-        # Custom labels: 显示百分比 + 时长，放在切片外侧
+        # Custom labels: 显示百分比 + 时长，小于 3% 隐藏，防止重叠
         for s in slices:
-            s.setLabelVisible(True)
-            s.setLabelColor(QColor("#ffffff") if is_dark else QColor("#333333"))
-            # 标签格式: 分类名 时长(占比%)
             pct = s.percentage() * 100
-            minutes = s.value() // 60
-            s.setLabel(f"{s.label()} {minutes:.0f}分 ({pct:.1f}%)")
-            s.setLabelPosition(QPieSlice.LabelPosition.LabelOutside)
+            if pct < 3.0:
+                s.setLabelVisible(False)
+            else:
+                s.setLabelVisible(True)
+                s.setLabelColor(QColor("#ffffff") if is_dark else QColor("#333333"))
+                # 标签格式: 分类名 时长(占比%)
+                minutes = s.value() // 60
+                s.setLabel(f"{s.label()} {minutes:.0f}分 ({pct:.1f}%)")
+                s.setLabelPosition(QPieSlice.LabelPosition.LabelOutside)
             
         self.pie_chart.addSeries(series)
+        series.hovered.connect(self.on_pie_hovered)
         
         # Styling Chart
         self.pie_chart.setBackgroundBrush(QBrush(bg_color))
@@ -635,52 +708,7 @@ class StatsDialog(QDialog):
         
         # QMessageBox manually styled to prevent text from being unreadable (Bug 1)
         msg = QMessageBox(None)
-        is_dark = (self.theme_mode == "dark")
-        if is_dark:
-            msg.setStyleSheet("""
-                QMessageBox {
-                    background-color: #1e1e24;
-                    color: #ffffff;
-                    font-family: "Microsoft YaHei", sans-serif;
-                }
-                QLabel {
-                    color: #ffffff;
-                    font-size: 13px;
-                }
-                QPushButton {
-                    background-color: #37474f;
-                    color: #ffffff;
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    min-width: 60px;
-                }
-                QPushButton:hover {
-                    background-color: #455a64;
-                }
-            """)
-        else:
-            msg.setStyleSheet("""
-                QMessageBox {
-                    background-color: #f5f5f7;
-                    color: #333333;
-                    font-family: "Microsoft YaHei", sans-serif;
-                }
-                QLabel {
-                    color: #333333;
-                    font-size: 13px;
-                }
-                QPushButton {
-                    background-color: #e0e0e0;
-                    color: #333333;
-                    border: 1px solid #cccccc;
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    min-width: 60px;
-                }
-                QPushButton:hover {
-                    background-color: #d6d6d6;
-                }
-            """)
+        self.style_message_box(msg)
         
         if success:
             msg.setIcon(QMessageBox.Icon.Information)
@@ -782,6 +810,16 @@ class StatsDialog(QDialog):
                 QPushButton[text="导出 CSV"]:pressed {
                     background-color: #004d40;
                     border: 1px solid #00695c;
+                }
+                #BtnBatchDeletePending, #BtnBatchDeleteCompleted {
+                    background-color: #c62828;
+                    color: #ffffff;
+                    border: 1px solid #c62828;
+                }
+                #BtnBatchDeletePending:hover, #BtnBatchDeleteCompleted:hover {
+                    background-color: #d32f2f;
+                    border: 1px solid #d32f2f;
+                    color: #ffffff;
                 }
                 #BtnExpand {
                     margin-top: 5px;
@@ -936,6 +974,16 @@ class StatsDialog(QDialog):
                     background-color: #1b5e20;
                     border: 1px solid #388e3c;
                 }
+                #BtnBatchDeletePending, #BtnBatchDeleteCompleted {
+                    background-color: #d32f2f;
+                    color: #ffffff;
+                    border: 1px solid #d32f2f;
+                }
+                #BtnBatchDeletePending:hover, #BtnBatchDeleteCompleted:hover {
+                    background-color: #e53935;
+                    border: 1px solid #e53935;
+                    color: #ffffff;
+                }
                 #BtnExpand {
                     margin-top: 5px;
                     margin-bottom: 5px;
@@ -1005,3 +1053,277 @@ class StatsDialog(QDialog):
                     font-size: 11px;
                 }
             """)
+
+    def update_todo_pending_list(self):
+        """ 更新待办清单表格（进行中） """
+        pending_todos = self.db.get_uncompleted_todos()
+        self.todo_pending_table.setRowCount(len(pending_todos))
+        
+        is_dark = (self.theme_mode == "dark")
+        
+        for row_idx, todo in enumerate(pending_todos):
+            # 1. 状态复选框
+            cb_container = QWidget()
+            cb_layout = QHBoxLayout(cb_container)
+            cb = QCheckBox()
+            cb.setChecked(False)
+            cb.setProperty("todo_id", todo["id"])
+            cb.clicked.connect(self.on_stats_todo_status_changed)
+            
+            # Apply styling for QCheckBox in table
+            if is_dark:
+                cb.setStyleSheet("""
+                    QCheckBox::indicator {
+                        width: 14px;
+                        height: 14px;
+                        border: 1px solid #8b5cf6;
+                        border-radius: 3px;
+                        background: #1a1622;
+                    }
+                    QCheckBox::indicator:checked {
+                        background-color: #8b5cf6;
+                        border: 1px solid #a78bfa;
+                    }
+                """)
+            else:
+                cb.setStyleSheet("""
+                    QCheckBox::indicator {
+                        width: 14px;
+                        height: 14px;
+                        border: 1px solid #ca8a04;
+                        border-radius: 3px;
+                        background: #ffffff;
+                    }
+                    QCheckBox::indicator:checked {
+                        background-color: #facc15;
+                        border: 1px solid #ca8a04;
+                    }
+                """)
+            cb_layout.addWidget(cb)
+            cb_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cb_layout.setContentsMargins(0, 0, 0, 0)
+            self.todo_pending_table.setCellWidget(row_idx, 0, cb_container)
+            
+            # Storing todo ID in column 0 item for reference
+            status_dummy = QTableWidgetItem("")
+            status_dummy.setData(Qt.ItemDataRole.UserRole, todo["id"])
+            self.todo_pending_table.setItem(row_idx, 0, status_dummy)
+            
+            # 2. 任务内容
+            content_item = QTableWidgetItem(todo.get("content", ""))
+            content_item.setToolTip(todo.get("content", ""))
+            self.todo_pending_table.setItem(row_idx, 1, content_item)
+            
+            # 3. 创建时间
+            time_str = todo.get("created_at") or ""
+            if time_str:
+                try:
+                    if 'T' in time_str:
+                        dt = datetime.datetime.fromisoformat(time_str)
+                        time_str = dt.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        time_str = time_str[:16]
+                except Exception:
+                    pass
+            time_item = QTableWidgetItem(time_str)
+            time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.todo_pending_table.setItem(row_idx, 2, time_item)
+            
+            # 4. 删除按钮
+            btn_delete = QPushButton("🗑️ 删除")
+            btn_delete.setStyleSheet("""
+                QPushButton {
+                    background-color: #c62828;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #d32f2f;
+                }
+            """)
+            btn_delete.clicked.connect(lambda checked=False, tid=todo["id"]: self.delete_pending_todo_from_stats(tid))
+            self.todo_pending_table.setCellWidget(row_idx, 3, btn_delete)
+
+    def on_stats_todo_status_changed(self):
+        """ 看板中待办勾选状态改变回调 """
+        cb = self.sender()
+        if cb:
+            todo_id = cb.property("todo_id")
+            checked = cb.isChecked()
+            if todo_id is not None:
+                self.db.update_todo_status(todo_id, checked)
+                logger.info(f"Todo {todo_id} status updated to {checked} from stats dialog")
+                self.refresh_data()
+                self.refresh_external_todo_window()
+
+    def delete_pending_todo_from_stats(self, todo_id):
+        """ 从统计看板删除进行中（未完成）待办记录 """
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除这条待办事项吗？\n此操作不可恢复。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.db.delete_todo(todo_id):
+                self.refresh_data()
+                self.refresh_external_todo_window()
+                logger.info(f"Pending todo {todo_id} deleted from stats dialog")
+            else:
+                QMessageBox.warning(self, "删除失败", "无法删除该记录，请查看日志。")
+
+    def batch_delete_pending_todos(self):
+        """ 批量删除选中的未完成待办事项 """
+        selected_indexes = self.todo_pending_table.selectedIndexes()
+        if not selected_indexes:
+            msg = QMessageBox(None)
+            self.style_message_box(msg)
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setWindowTitle("提示")
+            msg.setText("请先选择需要删除的行。")
+            msg.exec()
+            return
+            
+        # Extract unique row indexes
+        rows = sorted(list(set(index.row() for index in selected_indexes)), reverse=True)
+        
+        # Get todo IDs for selected rows
+        todo_ids = []
+        for row in rows:
+            dummy_item = self.todo_pending_table.item(row, 0)
+            if dummy_item:
+                tid = dummy_item.data(Qt.ItemDataRole.UserRole)
+                if tid is not None:
+                    todo_ids.append(tid)
+                    
+        if not todo_ids:
+            return
+            
+        msg = QMessageBox(None)
+        self.style_message_box(msg)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("确认批量删除")
+        msg.setText(f"确定要删除选中的 {len(todo_ids)} 条待办事项吗？\n此操作不可恢复。")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            success_count = 0
+            for tid in todo_ids:
+                if self.db.delete_todo(tid):
+                    success_count += 1
+            
+            logger.info(f"Batch deleted {success_count}/{len(todo_ids)} pending todos from stats dialog")
+            self.refresh_data()
+            self.refresh_external_todo_window()
+
+    def batch_delete_completed_todos(self):
+        """ 批量删除选中的已完成待办记录（待办日记） """
+        selected_indexes = self.todo_table.selectedIndexes()
+        if not selected_indexes:
+            msg = QMessageBox(None)
+            self.style_message_box(msg)
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setWindowTitle("提示")
+            msg.setText("请先选择需要删除的行。")
+            msg.exec()
+            return
+            
+        rows = sorted(list(set(index.row() for index in selected_indexes)), reverse=True)
+        
+        todo_ids = []
+        for row in rows:
+            dummy_item = self.todo_table.item(row, 0)
+            if dummy_item:
+                tid = dummy_item.data(Qt.ItemDataRole.UserRole)
+                if tid is not None:
+                    todo_ids.append(tid)
+                    
+        if not todo_ids:
+            return
+            
+        msg = QMessageBox(None)
+        self.style_message_box(msg)
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setWindowTitle("确认批量删除")
+        msg.setText(f"确定要删除选中的 {len(todo_ids)} 条已完成待办记录吗？\n此操作不可恢复。")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            success_count = 0
+            for tid in todo_ids:
+                if self.db.delete_todo(tid):
+                    success_count += 1
+            
+            logger.info(f"Batch deleted {success_count}/{len(todo_ids)} completed todos from stats dialog")
+            self.refresh_data()
+            self.refresh_external_todo_window()
+
+    def style_message_box(self, msg):
+        """ 样式化消息提示框 """
+        # 设置窗口图标
+        icon_path = resource_path("assets/icon.png")
+        pixmap = QPixmap(icon_path)
+        if not pixmap.isNull():
+            msg.setWindowIcon(QIcon(pixmap))
+            
+        is_dark = (self.theme_mode == "dark")
+        if is_dark:
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #1e1e24;
+                    color: #ffffff;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QLabel {
+                    color: #ffffff;
+                    font-size: 13px;
+                }
+                QPushButton {
+                    background-color: #37474f;
+                    color: #ffffff;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #455a64;
+                }
+            """)
+        else:
+            msg.setStyleSheet("""
+                QMessageBox {
+                    background-color: #f5f5f7;
+                    color: #333333;
+                    font-family: "Microsoft YaHei", sans-serif;
+                }
+                QLabel {
+                    color: #333333;
+                    font-size: 13px;
+                }
+                QPushButton {
+                    background-color: #e0e0e0;
+                    color: #333333;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 6px 16px;
+                    min-width: 60px;
+                }
+                QPushButton:hover {
+                    background-color: #d6d6d6;
+                }
+            """)
+
+    def refresh_external_todo_window(self):
+        """ 刷新外部的便签待办窗口 """
+        from PyQt6.QtWidgets import QApplication
+        from ui.todo_window import TodoWindow
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, TodoWindow):
+                w.reload_todos()
+                break

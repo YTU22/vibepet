@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
     "todo_x": None,                   # 便签待办窗口上次X坐标
     "todo_y": None,                   # 便签待办窗口上次Y坐标
     "bubble_opacity": 1.0,            # 气泡背景不透明度 (0.3-1.0)
+    "app_bubble_font_size": 9,        # 监控气泡字号，默认9
     "random_emotions": True,          # 是否启用随机情绪
     # 系统监控配置
     "sys_monitor_enabled": True,      # 是否启用系统监控

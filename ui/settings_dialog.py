@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.1.9"
+APP_VERSION = "1.2.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -384,6 +384,13 @@ class SettingsDialog(QDialog):
         self.lbl_opacity_value.setMinimumWidth(50)
         opacity_row.addWidget(self.lbl_opacity_value)
         pet_form.addRow("气泡透明度:", opacity_row)
+
+        # 监控气泡字号
+        self.sb_bubble_font_size = QSpinBox()
+        self.sb_bubble_font_size.setRange(8, 20)
+        self.sb_bubble_font_size.setSuffix(" pt")
+        self.sb_bubble_font_size.setMinimumWidth(140)
+        pet_form.addRow("气泡大小 (字号):", self.sb_bubble_font_size)
 
         # 主题风格设置
         self.combo_theme = QComboBox()
@@ -1049,6 +1056,7 @@ class SettingsDialog(QDialog):
         opacity = int(self.config.get("bubble_opacity", 1.0) * 100)
         self.slider_bubble_opacity.setValue(opacity)
         self.lbl_opacity_value.setText(f"{opacity}%")
+        self.sb_bubble_font_size.setValue(self.config.get("app_bubble_font_size", 9))
 
         # 随机情绪设置
         self.cb_random_emotions.setChecked(self.config.get("random_emotions", True))
@@ -1156,6 +1164,7 @@ class SettingsDialog(QDialog):
         self.config.set("screen_snapping", self.cb_screen_snapping.isChecked())
         self.config.set("todo_visible", self.cb_todo_visible.isChecked())
         self.config.set("bubble_opacity", self.slider_bubble_opacity.value() / 100.0)
+        self.config.set("app_bubble_font_size", self.sb_bubble_font_size.value())
         theme_val = "light" if self.combo_theme.currentIndex() == 1 else "dark"
         self.config.set("theme_mode", theme_val)
 
@@ -1266,6 +1275,7 @@ class SettingsDialog(QDialog):
         self.config.set("screen_snapping", DEFAULT_CONFIG["screen_snapping"])
         self.config.set("todo_visible", DEFAULT_CONFIG["todo_visible"])
         self.config.set("bubble_opacity", DEFAULT_CONFIG["bubble_opacity"])
+        self.config.set("app_bubble_font_size", DEFAULT_CONFIG.get("app_bubble_font_size", 9))
         self.config.set("theme_mode", DEFAULT_CONFIG["theme_mode"])
         self.config.save_config()
         self.slider_size.setValue(DEFAULT_CONFIG["pet_size"])
@@ -1278,6 +1288,7 @@ class SettingsDialog(QDialog):
         opacity = int(DEFAULT_CONFIG["bubble_opacity"] * 100)
         self.slider_bubble_opacity.setValue(opacity)
         self.lbl_opacity_value.setText(f"{opacity}%")
+        self.sb_bubble_font_size.setValue(DEFAULT_CONFIG.get("app_bubble_font_size", 9))
         theme_val = DEFAULT_CONFIG["theme_mode"]
         self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
         self.settings_changed.emit()

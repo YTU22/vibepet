@@ -28,6 +28,7 @@ class ReminderManager:
         self.last_category = "idle"
         self.work_start_time = 0
         self.happy_until = 0  # Timestamp until which "happy" animation remains active
+        self.rule_animation_until = {}  # 记录各提醒规则动画的到期时间戳
 
         # State tracking for late night continuous active time
         self.late_night_active_seconds = 0
@@ -316,16 +317,20 @@ class ReminderManager:
             
             # Evaluate condition
             if self._evaluate_condition(rule["condition"], context):
-                active_rules.append(rule)
-                
                 # Format texts
                 bubble_text = rule.get("bubble_text", "").format(threshold=int(threshold_val))
                 toast_text = rule.get("toast_text", "").format(threshold=int(threshold_val))
                 
                 # Enforce notification trigger
                 triggered = self.trigger_reminder(rule_id, bubble_text, toast_text, rule.get("is_toast", True))
-                if triggered and rule_id == "fatigue" and self.warning_dialog_cb:
-                    self.warning_dialog_cb()
+                if triggered:
+                    self.rule_animation_until[rule_id] = now + 60  # 规则触发的特有动画（如生气、疲惫）持续 60 秒后恢复正常
+                    if rule_id == "fatigue" and self.warning_dialog_cb:
+                        self.warning_dialog_cb()
+                
+                # 仅在动画有效期内将该规则加入活跃动画列表，防止因今日累计时间条件永久满足而导致桌宠整天处于冒火/疲惫状态
+                if now < self.rule_animation_until.get(rule_id, 0):
+                    active_rules.append(rule)
 
         # Sort rules that are currently met/active by priority descending
         active_rules.sort(key=lambda r: r.get("priority", 0), reverse=True)
