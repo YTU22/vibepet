@@ -41,6 +41,16 @@ class DatabaseManager:
                 """)
                 # Create an index for faster queries on date
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_date ON usage(date)")
+                
+                # 新增待办事项表
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS todo (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content TEXT NOT NULL,
+                        completed INTEGER DEFAULT 0,
+                        created_at TEXT NOT NULL
+                    )
+                """)
             logger.info("Database initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -255,3 +265,53 @@ class DatabaseManager:
                 
         except Exception as e:
             logger.error(f"Error during database auto-cleanup: {e}")
+
+    def get_all_todos(self):
+        """ 获取所有待办事项，未完成的在前，已完成的在后，按ID倒序 """
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute("SELECT id, content, completed, created_at FROM todo ORDER BY completed ASC, id DESC")
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting all todos: {e}")
+            return []
+
+    def add_todo(self, content):
+        """ 添加一条新的待办事项 """
+        if not content:
+            return None
+        created_at = datetime.datetime.now().isoformat()
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute(
+                    "INSERT INTO todo (content, completed, created_at) VALUES (?, 0, ?)",
+                    (content, created_at)
+                )
+                todo_id = cursor.lastrowid
+                return todo_id
+        except Exception as e:
+            logger.error(f"Error adding todo: {e}")
+            return None
+
+    def update_todo_status(self, todo_id, completed):
+        """ 更新待办事项的完成状态 (1: 已完成, 0: 未完成) """
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "UPDATE todo SET completed = ? WHERE id = ?",
+                    (1 if completed else 0, todo_id)
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Error updating todo status: {e}")
+            return False
+
+    def delete_todo(self, todo_id):
+        """ 删除指定的待办事项 """
+        try:
+            with self._get_conn() as conn:
+                conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting todo: {e}")
+            return False

@@ -4,7 +4,7 @@ from PyQt6.QtGui import QIcon, QAction, QPixmap
 from PyQt6.QtCore import Qt
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled
 
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -78,6 +78,13 @@ class TrayIcon(QSystemTrayIcon):
         self.act_passthrough.setChecked(self.main_win.mouse_passthrough)
         self.act_passthrough.triggered.connect(self.toggle_mouse_passthrough)
         self.menu.addAction(self.act_passthrough)
+
+        # 5.5 便签待办
+        self.act_todo = QAction("便签待办", self)
+        self.act_todo.setCheckable(True)
+        self.act_todo.setChecked(self.main_win.config.get("todo_visible", False))
+        self.act_todo.triggered.connect(self.toggle_todo)
+        self.menu.addAction(self.act_todo)
 
         self.menu.addSeparator()
 
@@ -160,6 +167,10 @@ class TrayIcon(QSystemTrayIcon):
         else:
             self.act_auto_start.setChecked(not new_state)
 
+    def toggle_todo(self):
+        """ 从托盘菜单切换便签窗口显示状态 """
+        self.main_win.toggle_todo_window()
+
     def update_menu_text(self):
         """ Sync menu toggle text with current window visibility """
         if self.main_win.isVisible():
@@ -169,4 +180,5 @@ class TrayIcon(QSystemTrayIcon):
         # 同步锁定和穿透状态显示
         self.act_lock.setChecked(self.main_win.window_locked)
         self.act_passthrough.setChecked(self.main_win.mouse_passthrough)
+        self.act_todo.setChecked(self.main_win.config.get("todo_visible", False))
         self.act_auto_start.setChecked(is_auto_start_enabled())

@@ -17,9 +17,10 @@ from utils.helpers import resource_path, set_auto_start
 from ui.settings_dialog import SettingsDialog
 from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
+from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -162,6 +163,11 @@ class PetWindow(QWidget):
         self.word_count_thread = WordCountMonitorThread(self.config, self)
         self.word_count_thread.selection_detected.connect(self.on_selection_detected)
         self.word_count_thread.start()
+
+        # 初始化并按配置显示便签待办窗口
+        self.todo_window = None
+        if self.config.get("todo_visible", False):
+            self.toggle_todo_window(True)
 
         logger.info("Pet Window initialized.")
 
@@ -791,6 +797,36 @@ class PetWindow(QWidget):
         self._bubble_anim_group.finished.connect(on_warning_bubble_finished)
         self._bubble_anim_group.start()
 
+    # --- 便签待办功能 ---
+    def toggle_todo_window(self, visible=None):
+        """ 切换便签待办窗口的显示与隐藏 """
+        if visible is None:
+            visible = not (self.todo_window is not None and self.todo_window.isVisible())
+
+        self.config.set("todo_visible", visible)
+
+        if visible:
+            if self.todo_window is None:
+                self.todo_window = TodoWindow(self.db, self.config, self)
+            self.todo_window.apply_theme()
+            self.todo_window.reload_todos()
+            self.todo_window.show()
+            self.todo_window.raise_()
+        else:
+            if self.todo_window is not None:
+                self.todo_window.hide()
+
+        # 同步托盘菜单与右键菜单勾选状态
+        if hasattr(self, 'tray') and self.tray:
+            self.tray.act_todo.setChecked(visible)
+        
+        logger.info(f"Todo window visibility toggled to: {visible}")
+
+    def on_todo_window_toggled(self, visible):
+        """ 便签窗口内部关闭回调 """
+        if hasattr(self, 'tray') and self.tray:
+            self.tray.act_todo.setChecked(visible)
+
     # --- 窗口锁定功能 ---
     def set_window_locked(self, locked):
         """ 设置窗口位置是否锁定（禁止拖拽移动） """
@@ -1066,6 +1102,11 @@ class PetWindow(QWidget):
         act_passthrough.setCheckable(True)
         act_passthrough.setChecked(self.mouse_passthrough)
 
+        # 便签待办选项
+        act_todo = menu.addAction("便签待办")
+        act_todo.setCheckable(True)
+        act_todo.setChecked(self.todo_window is not None and self.todo_window.isVisible())
+
         menu.addSeparator()
         act_about = menu.addAction("关于")
         menu.addSeparator()
@@ -1126,6 +1167,8 @@ class PetWindow(QWidget):
             self.set_window_locked(not self.window_locked)
         elif action == act_passthrough:
             self.set_mouse_passthrough(not self.mouse_passthrough)
+        elif action == act_todo:
+            self.toggle_todo_window()
         elif action == act_about:
             self.open_about_dialog()
         elif action == act_exit:
@@ -1194,6 +1237,10 @@ class PetWindow(QWidget):
         
         # 重新应用系统监控面板的主题样式
         self._apply_sys_panel_style()
+
+        # 重新应用主题到便签窗口
+        if getattr(self, "todo_window", None) is not None:
+            self.todo_window.apply_theme()
 
         # 重新应用主题到所有活动对话框
         theme_val = self.config.get("theme_mode", "light")

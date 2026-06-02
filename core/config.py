@@ -42,6 +42,9 @@ DEFAULT_CONFIG = {
     "window_locked": False,           # 窗口位置是否锁定（禁止拖拽）
     "mouse_passthrough": False,       # 鼠标穿透模式（点击穿透到下层窗口）
     "screen_snapping": True,          # 边缘隐藏（躲猫猫）模式
+    "todo_visible": False,            # 便签待办窗口可见状态
+    "todo_x": None,                   # 便签待办窗口上次X坐标
+    "todo_y": None,                   # 便签待办窗口上次Y坐标
     "bubble_opacity": 1.0,            # 气泡背景不透明度 (0.3-1.0)
     "random_emotions": True,          # 是否启用随机情绪
     # 系统监控配置
