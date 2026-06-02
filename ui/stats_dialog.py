@@ -153,6 +153,27 @@ class StatsDialog(QDialog):
         
         self.tab_widget.addTab(self.tab_pie, "分类占比")
         
+        # Tab 3: Completed Todos (待办日记)
+        self.tab_todo = QWidget()
+        todo_layout = QVBoxLayout(self.tab_todo)
+        todo_layout.setContentsMargins(10, 10, 10, 10)
+        
+        self.todo_table = QTableWidget()
+        self.todo_table.setColumnCount(3)
+        self.todo_table.setHorizontalHeaderLabels(["状态", "任务内容", "完成时间"])
+        self.todo_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.todo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.todo_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.todo_table.setColumnWidth(0, 80)
+        self.todo_table.setColumnWidth(2, 160)
+        self.todo_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.todo_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.todo_table.setAlternatingRowColors(True)
+        self.todo_table.verticalHeader().setVisible(False)
+        todo_layout.addWidget(self.todo_table)
+        
+        self.tab_widget.addTab(self.tab_todo, "待办日记")
+        
         main_layout.addWidget(self.tab_widget)
         
         # Bottom controls
@@ -175,6 +196,42 @@ class StatsDialog(QDialog):
         """ Refresh chart data from database """
         self.update_bar_chart()
         self.update_pie_chart()
+        self.update_todo_list()
+
+    def update_todo_list(self):
+        """ 更新待办日记表格 """
+        completed_todos = self.db.get_completed_todos()
+        self.todo_table.setRowCount(len(completed_todos))
+        
+        for row_idx, todo in enumerate(completed_todos):
+            # 1. 状态
+            status_text = "📁 已归档" if todo.get("archived") else "✅ 已完成"
+            status_item = QTableWidgetItem(status_text)
+            status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.todo_table.setItem(row_idx, 0, status_item)
+            
+            # 2. 任务内容
+            content_item = QTableWidgetItem(todo.get("content", ""))
+            content_item.setToolTip(todo.get("content", ""))
+            self.todo_table.setItem(row_idx, 1, content_item)
+            
+            # 3. 完成时间
+            time_str = todo.get("completed_at") or todo.get("created_at") or ""
+            # Format time if it's in ISO format (e.g. 2026-06-02T17:05:27.123)
+            if time_str:
+                try:
+                    if 'T' in time_str:
+                        # ISO format
+                        dt = datetime.datetime.fromisoformat(time_str)
+                        time_str = dt.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        # Maybe already formatted or other format
+                        time_str = time_str[:16]
+                except Exception:
+                    pass
+            time_item = QTableWidgetItem(time_str)
+            time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.todo_table.setItem(row_idx, 2, time_item)
 
     def update_bar_chart(self):
         """ Fetch top apps and render bar/table chart """

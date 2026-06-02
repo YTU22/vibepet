@@ -49,15 +49,20 @@ class DatabaseManager:
                         content TEXT NOT NULL,
                         completed INTEGER DEFAULT 0,
                         created_at TEXT NOT NULL,
-                        archived INTEGER DEFAULT 0
+                        archived INTEGER DEFAULT 0,
+                        completed_at TEXT
                     )
                 """)
-                # 检查并新增 archived 字段（针对旧表迁移）
+                # 检查并新增 archived 与 completed_at 字段（针对旧表迁移）
                 cursor = conn.execute("PRAGMA table_info(todo)")
                 columns = [row[1] for row in cursor.fetchall()]
-                if columns and "archived" not in columns:
-                    conn.execute("ALTER TABLE todo ADD COLUMN archived INTEGER DEFAULT 0")
-                    logger.info("Migrated todo table to include 'archived' column.")
+                if columns:
+                    if "archived" not in columns:
+                        conn.execute("ALTER TABLE todo ADD COLUMN archived INTEGER DEFAULT 0")
+                        logger.info("Migrated todo table to include 'archived' column.")
+                    if "completed_at" not in columns:
+                        conn.execute("ALTER TABLE todo ADD COLUMN completed_at TEXT")
+                        logger.info("Migrated todo table to include 'completed_at' column.")
             logger.info("Database initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -303,10 +308,11 @@ class DatabaseManager:
     def update_todo_status(self, todo_id, completed):
         """ 更新待办事项的完成状态 (1: 已完成, 0: 未完成) """
         try:
+            completed_at = datetime.datetime.now().isoformat() if completed else None
             with self._get_conn() as conn:
                 conn.execute(
-                    "UPDATE todo SET completed = ? WHERE id = ?",
-                    (1 if completed else 0, todo_id)
+                    "UPDATE todo SET completed = ?, completed_at = ? WHERE id = ?",
+                    (1 if completed else 0, completed_at, todo_id)
                 )
             return True
         except Exception as e:
@@ -314,34 +320,38 @@ class DatabaseManager:
             return False
 
     def delete_todo(self, todo_id):
-        """ 删除指定的待办事项：已完成的归档保存（像日记一样记录），未完成的物理删除 """
+        """ 物理删除指定的待办事项 """
         try:
             with self._get_conn() as conn:
-                # 查询是否已完成
-                cursor = conn.execute("SELECT completed FROM todo WHERE id = ?", (todo_id,))
-                row = cursor.fetchone()
-                if row:
-                    completed = bool(row["completed"])
-                    if completed:
-                        # 已完成，归档为日记历史保存
-                        conn.execute("UPDATE todo SET archived = 1 WHERE id = ?", (todo_id,))
-                        logger.info(f"Archived completed todo item id={todo_id} in background")
-                    else:
-                        # 未完成，物理删除不保留
-                        conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
-                        logger.info(f"Physically deleted uncompleted todo item id={todo_id}")
+                conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
             return True
         except Exception as e:
             logger.error(f"Error deleting todo: {e}")
             return False
 
-    def clear_completed_todos(self):
-        """ 归档所有已完成的待办事项 """
+    def archive_todo(self, todo_id):
+        """ 归档指定的已完成待办事项 """
         try:
             with self._get_conn() as conn:
-                conn.execute("UPDATE todo SET archived = 1 WHERE completed = 1 AND archived = 0")
-                logger.info("Archived all completed todo items")
+                conn.execute("UPDATE todo SET archived = 1 WHERE id = ?", (todo_id,))
             return True
         except Exception as e:
-            logger.error(f"Error clearing completed todos: {e}")
+            logger.error(f"Error archiving todo: {e}")
             return False
+
+    def get_completed_todos(self):
+        """ 获取所有已完成的待办事项（包括已归档的和未归档的），按完成时间倒序 """
+        try:
+            with self._get_conn() as conn:
+                # 检查 completed_at 字段是否存在，做防错处理
+                cursor = conn.execute("PRAGMA table_info(todo)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if "completed_at" in columns:
+                    sql = "SELECT id, content, created_at, completed_at, archived FROM todo WHERE completed = 1 ORDER BY COALESCE(completed_at, created_at) DESC, id DESC"
+                else:
+                    sql = "SELECT id, content, created_at, NULL as completed_at, archived FROM todo WHERE completed = 1 ORDER BY id DESC"
+                cursor = conn.execute(sql)
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting completed todos: {e}")
+            return []
