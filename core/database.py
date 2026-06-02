@@ -339,19 +339,72 @@ class DatabaseManager:
             logger.error(f"Error archiving todo: {e}")
             return False
 
-    def get_completed_todos(self):
-        """ 获取所有已完成的待办事项（包括已归档的和未归档的），按完成时间倒序 """
+    def get_completed_todos(self, date_str=None):
+        """ 获取已完成的待办事项（包括已归档的和未归档的），按完成时间倒序
+        Args:
+            date_str: 可选，筛选指定日期的待办 (YYYY-MM-DD 格式)
+        """
         try:
             with self._get_conn() as conn:
                 # 检查 completed_at 字段是否存在，做防错处理
                 cursor = conn.execute("PRAGMA table_info(todo)")
                 columns = [row[1] for row in cursor.fetchall()]
-                if "completed_at" in columns:
+                
+                if date_str and "completed_at" in columns:
+                    # 按日期筛选：completed_at 的前10位匹配日期
+                    sql = "SELECT id, content, created_at, completed_at, archived FROM todo WHERE completed = 1 AND SUBSTR(COALESCE(completed_at, created_at), 1, 10) = ? ORDER BY COALESCE(completed_at, created_at) DESC, id DESC"
+                    cursor = conn.execute(sql, (date_str,))
+                elif "completed_at" in columns:
                     sql = "SELECT id, content, created_at, completed_at, archived FROM todo WHERE completed = 1 ORDER BY COALESCE(completed_at, created_at) DESC, id DESC"
+                    cursor = conn.execute(sql)
                 else:
                     sql = "SELECT id, content, created_at, NULL as completed_at, archived FROM todo WHERE completed = 1 ORDER BY id DESC"
-                cursor = conn.execute(sql)
+                    cursor = conn.execute(sql)
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Error getting completed todos: {e}")
             return []
+
+    def get_usage_by_date(self, date_str):
+        """ 获取指定日期的软件使用数据 """
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute(
+                    """
+                    SELECT process_name, category, duration_seconds 
+                    FROM usage 
+                    WHERE date = ? 
+                    ORDER BY duration_seconds DESC
+                    """, (date_str,)
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error getting usage by date: {e}")
+            return []
+
+    def get_total_by_date(self, date_str):
+        """ 获取指定日期的总使用时长 """
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute(
+                    "SELECT SUM(duration_seconds) FROM usage WHERE date = ?", (date_str,)
+                )
+                row = cursor.fetchone()
+                return row[0] if row and row[0] is not None else 0
+        except Exception as e:
+            logger.error(f"Error getting total by date: {e}")
+            return 0
+
+    def get_category_by_date(self, date_str, category):
+        """ 获取指定日期某分类的使用时长 """
+        try:
+            with self._get_conn() as conn:
+                cursor = conn.execute(
+                    "SELECT SUM(duration_seconds) FROM usage WHERE date = ? AND category = ?", 
+                    (date_str, category)
+                )
+                row = cursor.fetchone()
+                return row[0] if row and row[0] is not None else 0
+        except Exception as e:
+            logger.error(f"Error getting category by date: {e}")
+            return 0

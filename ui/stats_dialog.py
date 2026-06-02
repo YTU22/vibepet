@@ -4,9 +4,10 @@ import logging
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QTabWidget, 
     QWidget, QMessageBox, QLabel, QTableWidget, QTableWidgetItem,
-    QHeaderView, QAbstractItemView, QStackedWidget
+    QHeaderView, QAbstractItemView, QStackedWidget, QDateEdit,
+    QCalendarWidget
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QDate
 from PyQt6.QtGui import QColor, QBrush, QPen, QPainter, QIcon, QPixmap
 
 from utils.helpers import resource_path
@@ -25,6 +26,9 @@ class StatsDialog(QDialog):
         self.db = db_manager
         self.config = config_manager
         self.theme_mode = self.config.get("theme_mode", "light") if self.config else "light"
+        
+        # 当前查看的日期，默认今天
+        self.current_date = datetime.date.today()
         
         self.setWindowTitle("统计看板")
         self.resize(700, 500)
@@ -71,11 +75,26 @@ class StatsDialog(QDialog):
         main_layout.setContentsMargins(15, 15, 15, 15)
         main_layout.setSpacing(15)
         
-        # 顶部标题 + 时间 + 主题切换
+        # 顶部标题 + 日期选择 + 时间 + 主题切换
         top_layout = QHBoxLayout()
         title_label = QLabel("统计看板")
         title_label.setObjectName("StatsTitle")
         top_layout.addWidget(title_label)
+        
+        # 日期选择器
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDate(QDate(self.current_date.year, self.current_date.month, self.current_date.day))
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.dateChanged.connect(self.on_date_changed)
+        self.date_edit.setObjectName("DateEdit")
+        top_layout.addWidget(self.date_edit)
+        
+        self.btn_today = QPushButton("今天")
+        self.btn_today.setObjectName("BtnToday")
+        self.btn_today.clicked.connect(self.go_to_today)
+        top_layout.addWidget(self.btn_today)
+        
         top_layout.addStretch()
         
         self.lbl_time = QLabel()
@@ -159,13 +178,15 @@ class StatsDialog(QDialog):
         todo_layout.setContentsMargins(10, 10, 10, 10)
         
         self.todo_table = QTableWidget()
-        self.todo_table.setColumnCount(3)
-        self.todo_table.setHorizontalHeaderLabels(["状态", "任务内容", "完成时间"])
+        self.todo_table.setColumnCount(4)
+        self.todo_table.setHorizontalHeaderLabels(["状态", "任务内容", "完成时间", "操作"])
         self.todo_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.todo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.todo_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.todo_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         self.todo_table.setColumnWidth(0, 80)
         self.todo_table.setColumnWidth(2, 160)
+        self.todo_table.setColumnWidth(3, 80)
         self.todo_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.todo_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.todo_table.setAlternatingRowColors(True)
@@ -192,15 +213,43 @@ class StatsDialog(QDialog):
         main_layout.addLayout(bottom_layout)
         self.setLayout(main_layout)
 
+    def on_date_changed(self, qdate):
+        """ 日期选择器变更时刷新数据 """
+        self.current_date = datetime.date(qdate.year(), qdate.month(), qdate.day())
+        self.refresh_data()
+
+    def go_to_today(self):
+        """ 跳转到今天 """
+        self.current_date = datetime.date.today()
+        self.date_edit.setDate(QDate(self.current_date.year, self.current_date.month, self.current_date.day))
+        self.refresh_data()
+
     def refresh_data(self):
         """ Refresh chart data from database """
         self.update_bar_chart()
         self.update_pie_chart()
         self.update_todo_list()
 
+    def delete_todo_from_stats(self, todo_id):
+        """ 从统计看板删除待办记录 """
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除这条待办记录吗？\n此操作不可恢复。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.db.delete_todo(todo_id):
+                self.update_todo_list()
+                logger.info(f"Todo {todo_id} deleted from stats dialog")
+            else:
+                QMessageBox.warning(self, "删除失败", "无法删除该记录，请查看日志。")
+
     def update_todo_list(self):
         """ 更新待办日记表格 """
-        completed_todos = self.db.get_completed_todos()
+        date_str = self.current_date.isoformat()
+        completed_todos = self.db.get_completed_todos(date_str)
         self.todo_table.setRowCount(len(completed_todos))
         
         for row_idx, todo in enumerate(completed_todos):
@@ -232,12 +281,35 @@ class StatsDialog(QDialog):
             time_item = QTableWidgetItem(time_str)
             time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.todo_table.setItem(row_idx, 2, time_item)
+            
+            # 4. 删除按钮
+            btn_delete = QPushButton("🗑️ 删除")
+            btn_delete.setStyleSheet("""
+                QPushButton {
+                    background-color: #c62828;
+                    color: #ffffff;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 11px;
+                }
+                QPushButton:hover {
+                    background-color: #d32f2f;
+                }
+            """)
+            btn_delete.clicked.connect(lambda checked=False, tid=todo["id"]: self.delete_todo_from_stats(tid))
+            self.todo_table.setCellWidget(row_idx, 3, btn_delete)
 
     def update_bar_chart(self):
         """ Fetch top apps and render bar/table chart """
         is_expanded = hasattr(self, 'btn_expand') and self.btn_expand.isChecked()
         limit = 100 if is_expanded else 10
-        top_apps = self.db.get_today_top_apps(limit)
+        
+        # 使用当前选择的日期
+        date_str = self.current_date.isoformat()
+        top_apps = self.db.get_usage_by_date(date_str)
+        if not is_expanded:
+            top_apps = top_apps[:10]
         self.current_top_apps = top_apps
         
         # Determine theme colors
@@ -462,14 +534,17 @@ class StatsDialog(QDialog):
             "#A78BFA", "#F472B6", "#FB7185", "#2DD4BF", "#F59E0B", "#60A5FA", "#34D399"
         ]
         
+        # 使用当前选择的日期
+        date_str = self.current_date.isoformat()
+
         for cat_id in categories_dict.keys():
-            sec = self.db.get_today_by_category(cat_id)
+            sec = self.db.get_category_by_date(date_str, cat_id)
             if sec > 0:
                 cat_seconds[cat_id] = sec
                 total_sec += sec
-                
-        # 兜底查询“其他”分类时间
-        other_sec = self.db.get_today_by_category("other")
+
+        # 兜底查询其他分类时间
+        other_sec = self.db.get_category_by_date(date_str, "other")
         if other_sec > 0:
             cat_seconds["other"] = other_sec
             total_sec += other_sec
