@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.1.8"
+APP_VERSION = "1.1.9"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -844,7 +844,8 @@ class SettingsDialog(QDialog):
                     urls_to_try = []
                     if self.download_url:
                         # 1. 国内加速代理 (CN Speedup Proxy) - 对国内用户极快且免梯子
-                        urls_to_try.append(("国内加速代理", f"https://ghproxy.net/{self.download_url}"))
+                        urls_to_try.append(("国内加速镜像(主)", f"https://mirror.ghproxy.com/{self.download_url}"))
+                        urls_to_try.append(("国内加速代理(备)", f"https://ghproxy.net/{self.download_url}"))
                         # 2. 直连 GitHub - 针对有梯子/VPN 的用户
                         urls_to_try.append(("直连 GitHub", self.download_url))
                     # 3. 官方流式代理服务器 - 终极备用 (流式传输，在国外节点慢但稳定)
@@ -958,18 +959,24 @@ class SettingsDialog(QDialog):
             
             # PowerShell 命令：
             # 1. 寻找正在运行的 VibePet 进程并强制结束它（防止用户未完全关闭或多开）
-            # 2. 等待 1 秒确保释放
-            # 3. 将新下载的 zip 包解压并强行覆盖到可执行文件所在目录 (exe_dir)
-            # 4. 删除 zip 临时文件
-            # 5. 启动更新后的 VibePet.exe
+            # 2. 将正在运行的旧 exe 文件重命名为 .bak 以即时释放文件锁（防止由于多线程退出延迟导致的解压覆盖权限错误）
+            # 3. 将新下载的 zip 包解压并覆盖到可执行文件所在目录 (exe_dir)
+            # 4. 启动更新后的新版本 VibePet.exe
+            # 5. 清理 zip 临时文件，并在新进程启动后安全移除旧 .bak 文件
             # 采用 -WindowStyle Hidden 隐藏 PowerShell 黑窗
             ps_command = (
                 f'Start-Sleep -Seconds 1; '
+                f'$exePath = Join-Path "{exe_dir}" "{exe_name}"; '
+                f'$bakPath = "$exePath.bak"; '
                 f'$proc = Get-Process -Name "{exe_name.replace(".exe", "")}" -ErrorAction SilentlyContinue; '
                 f'if ($proc) {{ $proc | Stop-Process -Force; Start-Sleep -Seconds 1 }}; '
+                f'if (Test-Path $bakPath) {{ Remove-Item $bakPath -Force -ErrorAction SilentlyContinue }}; '
+                f'if (Test-Path $exePath) {{ Rename-Item $exePath -NewName "{exe_name}.bak" -Force -ErrorAction SilentlyContinue }}; '
                 f'Expand-Archive -Path "{temp_zip}" -DestinationPath "{exe_dir}" -Force; '
-                f'Remove-Item -Path "{temp_zip}" -Force; '
-                f'Start-Process -FilePath "{current_exe}" -WorkingDirectory "{exe_dir}"'
+                f'Start-Process -FilePath "$exePath" -WorkingDirectory "{exe_dir}"; '
+                f'Remove-Item -Path "{temp_zip}" -Force -ErrorAction SilentlyContinue; '
+                f'Start-Sleep -Seconds 1; '
+                f'if (Test-Path $bakPath) {{ Remove-Item $bakPath -Force -ErrorAction SilentlyContinue }}'
             )
             
             try:
