@@ -2,7 +2,8 @@ import os
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QCheckBox, QGraphicsDropShadowEffect, QApplication
+    QLineEdit, QScrollArea, QCheckBox, QGraphicsDropShadowEffect, QApplication,
+    QSizePolicy
 )
 from PyQt6.QtCore import Qt, QPoint, pyqtSlot
 from PyQt6.QtGui import QFont, QColor
@@ -33,10 +34,12 @@ class TodoItemWidget(QWidget):
         self.cb.stateChanged.connect(self._on_state_changed)
         layout.addWidget(self.cb)
 
-        # 2. 文本 Label
+        # 2. 文本 Label (设置 Ignored 策略与最小宽度以限制收缩并允许自动换行，避免撑开滚动视图使删除键被裁剪)
         self.lbl = QLabel(self.content, self)
         self.lbl.setWordWrap(True)
         self.lbl.setFont(QFont("Microsoft YaHei", 9))
+        self.lbl.setMinimumWidth(50)
+        self.lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.lbl, stretch=1)
 
         # 3. 删除按钮
@@ -127,6 +130,14 @@ class TodoWindow(QWidget):
 
         header.addStretch()
 
+        # 清除已完成按钮
+        self.btn_clear_completed = QPushButton("🧹 清除已完成", self)
+        self.btn_clear_completed.setObjectName("TodoClearBtn")
+        self.btn_clear_completed.setFont(QFont("Microsoft YaHei", 8))
+        self.btn_clear_completed.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_clear_completed.clicked.connect(self.clear_completed_todos)
+        header.addWidget(self.btn_clear_completed)
+
         self.btn_close = QPushButton("×", self)
         self.btn_close.setObjectName("TodoCloseBtn")
         self.btn_close.setFixedSize(20, 20)
@@ -216,6 +227,16 @@ class TodoWindow(QWidget):
                 #TodoCloseBtn:hover {
                     color: #854d0e;
                 }
+                #TodoClearBtn {
+                    border: none;
+                    background: transparent;
+                    color: #ca8a04;
+                    font-size: 11px;
+                }
+                #TodoClearBtn:hover {
+                    color: #854d0e;
+                    text-decoration: underline;
+                }
                 #TodoScroll, #TodoScrollContent {
                     background: transparent;
                 }
@@ -290,6 +311,16 @@ class TodoWindow(QWidget):
                 }
                 #TodoCloseBtn:hover {
                     color: #a78bfa;
+                }
+                #TodoClearBtn {
+                    border: none;
+                    background: transparent;
+                    color: #8b5cf6;
+                    font-size: 11px;
+                }
+                #TodoClearBtn:hover {
+                    color: #a78bfa;
+                    text-decoration: underline;
                 }
                 #TodoScroll, #TodoScrollContent {
                     background: transparent;
@@ -400,6 +431,12 @@ class TodoWindow(QWidget):
         # 重新加载保持布局一致
         self.reload_todos()
         logger.info(f"Deleted todo item id={todo_id}")
+
+    def clear_completed_todos(self):
+        """ 清除已完成的待办任务（在后台归档保存） """
+        self.db.clear_completed_todos()
+        self.reload_todos()
+        logger.info("Cleared completed todos and archived in database")
 
     def hide_window(self):
         """ 隐藏便签窗口并保存配置状态 """

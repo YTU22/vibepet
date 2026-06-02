@@ -48,9 +48,16 @@ class DatabaseManager:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         content TEXT NOT NULL,
                         completed INTEGER DEFAULT 0,
-                        created_at TEXT NOT NULL
+                        created_at TEXT NOT NULL,
+                        archived INTEGER DEFAULT 0
                     )
                 """)
+                # 检查并新增 archived 字段（针对旧表迁移）
+                cursor = conn.execute("PRAGMA table_info(todo)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if columns and "archived" not in columns:
+                    conn.execute("ALTER TABLE todo ADD COLUMN archived INTEGER DEFAULT 0")
+                    logger.info("Migrated todo table to include 'archived' column.")
             logger.info("Database initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}")
@@ -267,10 +274,10 @@ class DatabaseManager:
             logger.error(f"Error during database auto-cleanup: {e}")
 
     def get_all_todos(self):
-        """ 获取所有待办事项，未完成的在前，已完成的在后，按ID倒序 """
+        """ 获取所有未归档的待办事项，未完成的在前，已完成的在后，按ID倒序 """
         try:
             with self._get_conn() as conn:
-                cursor = conn.execute("SELECT id, content, completed, created_at FROM todo ORDER BY completed ASC, id DESC")
+                cursor = conn.execute("SELECT id, content, completed, created_at FROM todo WHERE archived = 0 ORDER BY completed ASC, id DESC")
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"Error getting all todos: {e}")
@@ -284,7 +291,7 @@ class DatabaseManager:
         try:
             with self._get_conn() as conn:
                 cursor = conn.execute(
-                    "INSERT INTO todo (content, completed, created_at) VALUES (?, 0, ?)",
+                    "INSERT INTO todo (content, completed, created_at, archived) VALUES (?, 0, ?, 0)",
                     (content, created_at)
                 )
                 todo_id = cursor.lastrowid
@@ -307,11 +314,34 @@ class DatabaseManager:
             return False
 
     def delete_todo(self, todo_id):
-        """ 删除指定的待办事项 """
+        """ 删除指定的待办事项：已完成的归档保存（像日记一样记录），未完成的物理删除 """
         try:
             with self._get_conn() as conn:
-                conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
+                # 查询是否已完成
+                cursor = conn.execute("SELECT completed FROM todo WHERE id = ?", (todo_id,))
+                row = cursor.fetchone()
+                if row:
+                    completed = bool(row["completed"])
+                    if completed:
+                        # 已完成，归档为日记历史保存
+                        conn.execute("UPDATE todo SET archived = 1 WHERE id = ?", (todo_id,))
+                        logger.info(f"Archived completed todo item id={todo_id} in background")
+                    else:
+                        # 未完成，物理删除不保留
+                        conn.execute("DELETE FROM todo WHERE id = ?", (todo_id,))
+                        logger.info(f"Physically deleted uncompleted todo item id={todo_id}")
             return True
         except Exception as e:
             logger.error(f"Error deleting todo: {e}")
+            return False
+
+    def clear_completed_todos(self):
+        """ 归档所有已完成的待办事项 """
+        try:
+            with self._get_conn() as conn:
+                conn.execute("UPDATE todo SET archived = 1 WHERE completed = 1 AND archived = 0")
+                logger.info("Archived all completed todo items")
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing completed todos: {e}")
             return False
