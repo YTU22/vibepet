@@ -140,7 +140,7 @@ class TodoWindow(QWidget):
         self.scroll = QScrollArea(self)
         self.scroll.setObjectName("TodoScroll")
         self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QScrollArea.FrameShape.NoFrame)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # 滚动区域内部容器
