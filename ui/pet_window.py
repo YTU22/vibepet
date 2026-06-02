@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 
 logger = logging.getLogger("vibe_pet")
 

@@ -80,7 +80,7 @@ def run_build():
 
     # 6. Create Release Zip
     print("[3/4] 正在打包归档 Release Zip 文件...")
-    zip_path = os.path.join(dist_dir, "VibePet-v1.2.1.zip")
+    zip_path = os.path.join(dist_dir, "VibePet-v1.2.2.zip")
     if os.path.exists(zip_path):
         try:
             os.remove(zip_path)
@@ -91,8 +91,8 @@ def run_build():
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(vp_dir):
                 for file in files:
-                    # Skip lock files in zip release
-                    if file == "vibe_pet.lock":
+                    # Skip user config and private database files in release zip
+                    if file in user_files:
                         continue
                     file_path = os.path.join(root, file)
                     rel_path = os.path.relpath(file_path, dist_dir)
