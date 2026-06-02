@@ -19,7 +19,7 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -133,6 +133,8 @@ class PetWindow(QWidget):
         self._is_shaking = False         # 是否正在摇晃
         self._is_dragging = False        # 是否正在拖拽
         self._drag_start_pos = QPoint()  # 拖拽起始位置
+        self.is_snapped = False          # 是否处于贴边隐藏状态
+        self.snap_edge = None            # 贴在左侧还是右侧 ("left" / "right")
 
         self.setup_ui()
         self.setup_tray()
@@ -338,6 +340,9 @@ class PetWindow(QWidget):
     
     def _update_sys_monitor(self):
         """ 更新系统监控显示 """
+        if getattr(self, "is_snapped", False):
+            self.sys_panel.hide()
+            return
         if not self.config.get("sys_monitor_enabled", True):
             self.sys_panel.hide()
             return
@@ -409,8 +414,8 @@ class PetWindow(QWidget):
 
     def _on_breath_tick(self):
         """ 呼吸浮动定时器回调：使用正弦曲线计算偏移 """
-        if self._is_shaking or self._is_dragging:
-            # 摇晃或拖拽期间暂停呼吸浮动
+        if self._is_shaking or self._is_dragging or self.is_snapped:
+            # 摇晃、拖拽或已贴边隐藏期间暂停呼吸浮动
             return
         self._breath_time += 0.05  # 50ms = 0.05s
         # 2 秒一个周期，振幅 8 像素
@@ -422,8 +427,8 @@ class PetWindow(QWidget):
 
     def _trigger_blink(self):
         """ 触发眨眼动画：图片快速压扁至 95% 再恢复 """
-        if self._is_shaking or self._is_dragging:
-            return  # 摇晃或拖拽期间不眨眼
+        if self._is_shaking or self._is_dragging or self.is_snapped:
+            return  # 摇晃、拖拽或已贴边隐藏期间不眨眼
         if self._blink_anim and self._blink_anim.state() == QPropertyAnimation.State.Running:
             return  # 已有眨眼动画在运行
 
@@ -514,6 +519,8 @@ class PetWindow(QWidget):
 
     def ensure_visible_on_screen(self):
         """ 确保窗口在屏幕可视区域内，防止坐标越界导致窗口不可见 """
+        if getattr(self, "is_snapped", False):
+            return
         from PyQt6.QtWidgets import QApplication
         screen = QApplication.primaryScreen().availableGeometry()
         x, y = self.x(), self.y()
@@ -528,6 +535,8 @@ class PetWindow(QWidget):
 
     def set_pet_size(self, size):
         """ 动态调整宠物窗口大小 """
+        if getattr(self, "is_snapped", False):
+            self.unsnap_window(animate=False)
         size = max(80, min(400, size))  # 限制范围 80~400
         self.pet_size = size
         self.bubble_height = max(80, int(size * 0.5))
@@ -696,6 +705,8 @@ class PetWindow(QWidget):
 
     def show_bubble_message(self, text):
         """ Trigger floating bubble animation with text """
+        if getattr(self, "is_snapped", False):
+            return
         # Hide app bubble to avoid layout collision
         if self.app_bubble.isVisible():
             self.app_bubble.hide()
@@ -850,6 +861,11 @@ class PetWindow(QWidget):
         if self.mouse_passthrough:
             event.ignore()
             return
+        if getattr(self, "is_snapped", False):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.unsnap_window()
+                event.accept()
+                return
         if self.window_locked:
             event.ignore()
             return
@@ -884,6 +900,138 @@ class PetWindow(QWidget):
             self.config.set("window_x", self.x())
             self.config.set("window_y", self.y())
             event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self.mouse_passthrough:
+            event.ignore()
+            return
+        if self.window_locked:
+            event.ignore()
+            return
+        if event.button() == Qt.MouseButton.LeftButton:
+            was_dragging = self._is_dragging
+            self._is_dragging = False
+            if was_dragging:
+                self.check_and_snap()
+            event.accept()
+
+    def check_and_snap(self):
+        """ 检测窗口是否靠近屏幕左右边缘并触发贴边收缩 """
+        if not self.config.get("screen_snapping", True):
+            return
+
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        
+        win_x = self.x()
+        win_width = self.width()
+        
+        dist_left = win_x - screen.x()
+        dist_right = (screen.x() + screen.width()) - (win_x + win_width)
+        
+        # 贴边检测阈值：20 像素
+        threshold = 20
+        # 收缩后露出的身体大小：根据宠物大小自适应（至少60，约占大小的35%）
+        sliver = max(60, int(self.pet_size * 0.35))
+        
+        pet_x = self.pet_label.x()
+        
+        if dist_left < threshold:
+            # 贴左侧：露出 pet_label 右端 sliver 像素
+            target_x = screen.x() + sliver - (pet_x + self.pet_size)
+            self.snap_to_edge("left", target_x)
+        elif dist_right < threshold:
+            # 贴右侧：露出 pet_label 左端 sliver 像素
+            target_x = (screen.x() + screen.width()) - sliver - pet_x
+            self.snap_to_edge("right", target_x)
+
+    def snap_to_edge(self, edge, target_x):
+        """ 播放贴边收缩动画并设置状态 """
+        self.is_snapped = True
+        self.snap_edge = edge
+        
+        # 隐藏气泡与监控面板
+        self.bubble.hide()
+        self.app_bubble.hide()
+        self.sys_panel.hide()
+        
+        # 如果当前启用了鼠标穿透，在贴边期间临时关闭它，以便能响应点击还原
+        if self.mouse_passthrough:
+            self._set_click_through(False)
+        
+        # 播放滑动动画
+        self.snap_animation = QPropertyAnimation(self, b"pos")
+        self.snap_animation.setDuration(300)
+        self.snap_animation.setStartValue(self.pos())
+        self.snap_animation.setEndValue(QPoint(int(target_x), self.y()))
+        self.snap_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+        
+        def on_finished():
+            self.move(int(target_x), self.y())
+            logger.info(f"[贴边隐藏] 桌宠成功贴边收缩到 {edge} 侧 (x={self.x()})")
+            
+        self.snap_animation.finished.connect(on_finished)
+        self.snap_animation.start()
+
+    def unsnap_window(self, animate=True):
+        """ 展开贴边隐藏状态，滑出还原窗口 """
+        if not getattr(self, "is_snapped", False):
+            return
+
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen().availableGeometry()
+        
+        pet_x = self.pet_label.x()
+        
+        if self.snap_edge == "left":
+            # 还原到左边缘对齐（pet_label 的左侧对齐屏幕左边缘）
+            target_x = screen.x() - pet_x
+        else:
+            # 还原到右边缘对齐（pet_label 的右侧对齐屏幕右边缘）
+            target_x = (screen.x() + screen.width()) - (pet_x + self.pet_size)
+            
+        # 限制在屏幕内，防止超出
+        target_x = max(screen.x(), min(target_x, screen.x() + screen.width() - self.width()))
+        
+        if animate:
+            self.snap_animation = QPropertyAnimation(self, b"pos")
+            self.snap_animation.setDuration(300)
+            self.snap_animation.setStartValue(self.pos())
+            self.snap_animation.setEndValue(QPoint(int(target_x), self.y()))
+            self.snap_animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+            
+            def on_finished():
+                self.move(int(target_x), self.y())
+                self.is_snapped = False
+                self.snap_edge = None
+                # 更新坐标并保存
+                self._base_y = self.y()
+                self.config.set("window_x", self.x())
+                self.config.set("window_y", self.y())
+                
+                # 恢复鼠标穿透状态（如果启用的话）
+                self.apply_mouse_passthrough()
+                
+                # 恢复气泡
+                if self.show_app_bubble_enabled:
+                    self.app_bubble.show()
+                self._update_sys_monitor()
+                logger.info("[贴边隐藏] 桌宠还原展开")
+                
+            self.snap_animation.finished.connect(on_finished)
+            self.snap_animation.start()
+        else:
+            self.move(int(target_x), self.y())
+            self.is_snapped = False
+            self.snap_edge = None
+            self._base_y = self.y()
+            self.config.set("window_x", self.x())
+            self.config.set("window_y", self.y())
+            self.apply_mouse_passthrough()
+            if self.show_app_bubble_enabled:
+                self.app_bubble.show()
+            self._update_sys_monitor()
+            logger.info("[贴边隐藏] 桌宠无动画直接展开")
 
     def mouseDoubleClickEvent(self, event):
         if self.mouse_passthrough:
@@ -1016,6 +1164,10 @@ class PetWindow(QWidget):
     @pyqtSlot()
     def on_settings_changed(self):
         """ 设置变更后的回调，应用新配置 """
+        # 如果关闭了贴边隐藏，且当前窗口处于贴边收缩状态，则立即还原
+        if not self.config.get("screen_snapping", True) and getattr(self, "is_snapped", False):
+            self.unsnap_window(animate=False)
+
         # 重新加载尺寸
         new_size = self.config.get("pet_size", 200)
         if new_size != self.pet_size:
@@ -1092,6 +1244,9 @@ class PetWindow(QWidget):
         app_bubble_x = max(10, app_bubble_right - w)
         app_bubble_y = self.bubble_height - 30
         self.app_bubble.setGeometry(app_bubble_x, app_bubble_y, w, 24)
+
+        if getattr(self, "is_snapped", False):
+            self.app_bubble.hide()
 
     def open_about_dialog(self):
         msg = QMessageBox(None)
@@ -1219,11 +1374,29 @@ class PetWindow(QWidget):
 
     def paintEvent(self, event):
         """ 自绘窗口背景：在透明窗口上绘制宠物图片，确保可见 """
-        # 关键修复：禁用自绘，让QLabel自己绘制内容
-        # 之前的自绘可能与QLabel的绘制冲突，导致内容不可见
-        # 测试证明：QLabel + setPixmap + WA_TranslucentBackground 可以正常显示
-        # 所以让子控件自己绘制，父窗口只负责透明背景
+        # 让QLabel自己绘制内容，但在贴边隐藏状态下绘制极低透明度的背景以捕获点击
         super().paintEvent(event)
+        if getattr(self, "is_snapped", False):
+            from PyQt6.QtGui import QPainter, QColor
+            painter = QPainter(self)
+            # 使用 alpha = 1 (几乎完全透明但能接收点击) 的颜色填充可见区域
+            fill_color = QColor(0, 0, 0, 1)
+            
+            from PyQt6.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().availableGeometry()
+            win_x = self.x()
+            
+            if self.snap_edge == "left":
+                # 贴左侧，可见部分在窗口右侧：从 max(0, screen.x() - win_x) 到 self.width()
+                start_x = max(0, screen.x() - win_x)
+                w = self.width() - start_x
+                if w > 0:
+                    painter.fillRect(start_x, 0, w, self.height(), fill_color)
+            elif self.snap_edge == "right":
+                # 贴右侧，可见部分在窗口左侧：从 0 到 max(0, (screen.x() + screen.width()) - win_x)
+                w = max(0, (screen.x() + screen.width()) - win_x)
+                if w > 0:
+                    painter.fillRect(0, 0, w, self.height(), fill_color)
 
     def showEvent(self, event):
         super().showEvent(event)

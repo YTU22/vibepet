@@ -363,6 +363,10 @@ class SettingsDialog(QDialog):
         self.cb_show_bubble = QCheckBox("显示当前应用监控气泡")
         pet_form.addRow("", self.cb_show_bubble)
 
+        # 贴边自动隐藏（躲猫猫）
+        self.cb_screen_snapping = QCheckBox("启用贴边自动隐藏（躲猫猫模式）")
+        pet_form.addRow("", self.cb_screen_snapping)
+
         # 气泡透明度
         self.slider_bubble_opacity = QSlider(Qt.Orientation.Horizontal)
         self.slider_bubble_opacity.setRange(30, 100)
@@ -1025,6 +1029,7 @@ class SettingsDialog(QDialog):
         self.cb_window_locked.setChecked(self.config.get("window_locked", False))
         self.cb_mouse_passthrough.setChecked(self.config.get("mouse_passthrough", False))
         self.cb_show_bubble.setChecked(self.config.get("show_app_bubble", True))
+        self.cb_screen_snapping.setChecked(self.config.get("screen_snapping", True))
         theme_val = self.config.get("theme_mode", "light")
         self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
 
@@ -1136,6 +1141,7 @@ class SettingsDialog(QDialog):
         self.config.set("window_locked", self.cb_window_locked.isChecked())
         self.config.set("mouse_passthrough", self.cb_mouse_passthrough.isChecked())
         self.config.set("show_app_bubble", self.cb_show_bubble.isChecked())
+        self.config.set("screen_snapping", self.cb_screen_snapping.isChecked())
         self.config.set("bubble_opacity", self.slider_bubble_opacity.value() / 100.0)
         theme_val = "light" if self.combo_theme.currentIndex() == 1 else "dark"
         self.config.set("theme_mode", theme_val)
@@ -1244,6 +1250,7 @@ class SettingsDialog(QDialog):
         self.config.set("window_locked", DEFAULT_CONFIG["window_locked"])
         self.config.set("mouse_passthrough", DEFAULT_CONFIG["mouse_passthrough"])
         self.config.set("show_app_bubble", DEFAULT_CONFIG["show_app_bubble"])
+        self.config.set("screen_snapping", DEFAULT_CONFIG["screen_snapping"])
         self.config.set("bubble_opacity", DEFAULT_CONFIG["bubble_opacity"])
         self.config.set("theme_mode", DEFAULT_CONFIG["theme_mode"])
         self.config.save_config()
@@ -1252,6 +1259,7 @@ class SettingsDialog(QDialog):
         self.cb_window_locked.setChecked(DEFAULT_CONFIG["window_locked"])
         self.cb_mouse_passthrough.setChecked(DEFAULT_CONFIG["mouse_passthrough"])
         self.cb_show_bubble.setChecked(DEFAULT_CONFIG["show_app_bubble"])
+        self.cb_screen_snapping.setChecked(DEFAULT_CONFIG["screen_snapping"])
         opacity = int(DEFAULT_CONFIG["bubble_opacity"] * 100)
         self.slider_bubble_opacity.setValue(opacity)
         self.lbl_opacity_value.setText(f"{opacity}%")
