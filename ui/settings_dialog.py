@@ -18,7 +18,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -67,7 +67,7 @@ class AnimatedSwitch(QAbstractButton):
         try:
             win = self.window()
             if hasattr(win, "config") and win.config:
-                is_dark = (win.config.get("theme_mode", "dark") == "dark")
+                is_dark = (win.config.get("theme_mode", "light") == "dark")
         except Exception:
             pass
             
@@ -589,10 +589,29 @@ class SettingsDialog(QDialog):
         self.sb_sysmon_interval.setSuffix(" 秒")
         sysmon_form.addRow("刷新间隔:", self.sb_sysmon_interval)
         sysmon_inner.addLayout(sysmon_form)
-        
-        
         sysmon_group.setLayout(sysmon_inner)
         sysmon_layout.addWidget(sysmon_group)
+        
+        # 新增：划词字数统计设置分组
+        word_count_group = QGroupBox("划词字数统计 (选区文本统计)")
+        word_count_inner = QVBoxLayout()
+        word_count_inner.setSpacing(10)
+        
+        self.cb_word_count_enabled = QCheckBox("启用全局划词字数统计")
+        word_count_inner.addWidget(self.cb_word_count_enabled)
+        
+        word_count_form = QFormLayout()
+        word_count_form.setSpacing(10)
+        word_count_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        
+        self.combo_word_count_mode = QComboBox()
+        self.combo_word_count_mode.addItems(["桌宠对话气泡", "独立悬浮卡片"])
+        self.combo_word_count_mode.setMinimumWidth(140)
+        word_count_form.addRow("显示方式:", self.combo_word_count_mode)
+        word_count_inner.addLayout(word_count_form)
+        
+        word_count_group.setLayout(word_count_inner)
+        sysmon_layout.addWidget(word_count_group)
         
         # Tab 5 恢复默认按钮
         btn_reset_sysmon = QPushButton("恢复监控默认")
@@ -1014,7 +1033,7 @@ class SettingsDialog(QDialog):
         self.cb_window_locked.setChecked(self.config.get("window_locked", False))
         self.cb_mouse_passthrough.setChecked(self.config.get("mouse_passthrough", False))
         self.cb_show_bubble.setChecked(self.config.get("show_app_bubble", True))
-        theme_val = self.config.get("theme_mode", "dark")
+        theme_val = self.config.get("theme_mode", "light")
         self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
 
         # 气泡透明度
@@ -1034,6 +1053,11 @@ class SettingsDialog(QDialog):
         self.cb_show_network.setChecked(sys_items.get("network", False))
         self.cb_show_gpu.setChecked(sys_items.get("gpu", False))
         self.sb_sysmon_interval.setValue(self.config.get("sys_monitor_interval", 2))
+        
+        # 划词统计设置
+        self.cb_word_count_enabled.setChecked(self.config.get("word_count_enabled", False))
+        word_mode = self.config.get("word_count_mode", "bubble")
+        self.combo_word_count_mode.setCurrentIndex(1 if word_mode == "card" else 0)
 
         # 加载各时段概率
         probs = self.config.get("emotion_probabilities", {})
@@ -1137,6 +1161,11 @@ class SettingsDialog(QDialog):
         })
         self.config.set("sys_monitor_interval", self.sb_sysmon_interval.value())
 
+        # 划词统计设置
+        self.config.set("word_count_enabled", self.cb_word_count_enabled.isChecked())
+        word_mode_val = "card" if self.combo_word_count_mode.currentIndex() == 1 else "bubble"
+        self.config.set("word_count_mode", word_mode_val)
+
         # 随机情绪设置
         self.config.set("random_emotions", self.cb_random_emotions.isChecked())
         self.config.set("emotion_probabilities", {
@@ -1227,6 +1256,7 @@ class SettingsDialog(QDialog):
         self.config.set("mouse_passthrough", DEFAULT_CONFIG["mouse_passthrough"])
         self.config.set("show_app_bubble", DEFAULT_CONFIG["show_app_bubble"])
         self.config.set("bubble_opacity", DEFAULT_CONFIG["bubble_opacity"])
+        self.config.set("theme_mode", DEFAULT_CONFIG["theme_mode"])
         self.config.save_config()
         self.slider_size.setValue(DEFAULT_CONFIG["pet_size"])
         self.lbl_size_value.setText(f"{DEFAULT_CONFIG['pet_size']} px")
@@ -1236,6 +1266,8 @@ class SettingsDialog(QDialog):
         opacity = int(DEFAULT_CONFIG["bubble_opacity"] * 100)
         self.slider_bubble_opacity.setValue(opacity)
         self.lbl_opacity_value.setText(f"{opacity}%")
+        theme_val = DEFAULT_CONFIG["theme_mode"]
+        self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
         self.settings_changed.emit()
         self._show_ok("宠物外观已恢复为默认值！")
 
@@ -1304,6 +1336,8 @@ class SettingsDialog(QDialog):
         self.config.set("sys_monitor_enabled", DEFAULT_CONFIG["sys_monitor_enabled"])
         self.config.set("sys_monitor_items", DEFAULT_CONFIG["sys_monitor_items"].copy())
         self.config.set("sys_monitor_interval", DEFAULT_CONFIG["sys_monitor_interval"])
+        self.config.set("word_count_enabled", DEFAULT_CONFIG["word_count_enabled"])
+        self.config.set("word_count_mode", DEFAULT_CONFIG["word_count_mode"])
         self.config.save_config()
         self.cb_sysmon_enabled.setChecked(DEFAULT_CONFIG["sys_monitor_enabled"])
         items = DEFAULT_CONFIG["sys_monitor_items"]
@@ -1313,6 +1347,9 @@ class SettingsDialog(QDialog):
         self.cb_show_network.setChecked(items["network"])
         self.cb_show_gpu.setChecked(items["gpu"])
         self.sb_sysmon_interval.setValue(DEFAULT_CONFIG["sys_monitor_interval"])
+        self.cb_word_count_enabled.setChecked(DEFAULT_CONFIG["word_count_enabled"])
+        word_mode = DEFAULT_CONFIG["word_count_mode"]
+        self.combo_word_count_mode.setCurrentIndex(1 if word_mode == "card" else 0)
         self.settings_changed.emit()
         self._show_ok("系统监控已恢复为默认值！")
 
@@ -1335,7 +1372,7 @@ class SettingsDialog(QDialog):
 
     def rebuild_apps_tab_content(self, initial=False):
         """ 动态重建进程名单 Tab 中的所有分类表单和检测列表 """
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         # 1. 缓存当前输入的文本值，防止刷新界面丢失
         if not initial:
             self.cache_current_apps_inputs()
@@ -1834,7 +1871,7 @@ class SettingsDialog(QDialog):
 
     def _apply_msg_style(self, msg, is_warning=False):
         """ Apply light/dark styling to QMessageBox based on theme """
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             msg.setStyleSheet(f"""
                 QMessageBox {{
@@ -1877,7 +1914,7 @@ class SettingsDialog(QDialog):
 
     def apply_styles(self):
         """ Apply modern stylesheet based on light/dark mode """
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             self.setStyleSheet("""
                 QDialog {

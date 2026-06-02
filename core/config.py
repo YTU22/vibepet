@@ -32,6 +32,9 @@ DEFAULT_CONFIG = {
     "show_pet_on_startup": True,      # 启动时是否显示宠物窗口
     "auto_start": False,              # 是否开机自启动
     "first_run": True,                # 是否首次运行（用于创建桌面快捷方式）
+    "theme_mode": "light",            # 默认主题模式：light/dark
+    "word_count_enabled": False,      # 是否启用全局划词统计
+    "word_count_mode": "bubble",      # 划词统计显示模式：bubble/card
     # 宠物窗口外观与行为设置
     "pet_size": 200,                  # 宠物窗口大小（像素），默认200
     "window_x": None,                 # 窗口上次X坐标

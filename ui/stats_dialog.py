@@ -24,7 +24,7 @@ class StatsDialog(QDialog):
         super().__init__(parent)
         self.db = db_manager
         self.config = config_manager
-        self.theme_mode = self.config.get("theme_mode", "dark") if self.config else "dark"
+        self.theme_mode = self.config.get("theme_mode", "light") if self.config else "light"
         
         self.setWindowTitle("统计看板")
         self.resize(700, 500)

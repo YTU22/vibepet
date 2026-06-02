@@ -5,11 +5,11 @@ import json
 import urllib.request
 import urllib.error
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QMenu, QMessageBox, QGraphicsOpacityEffect
+    QWidget, QLabel, QMenu, QMessageBox, QGraphicsOpacityEffect, QVBoxLayout, QApplication
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QPropertyAnimation, QSequentialAnimationGroup, pyqtSlot,
-    QEasingCurve, QTimer
+    QEasingCurve, QTimer, QThread, pyqtSignal, QMimeData
 )
 from PyQt6.QtGui import QRegion, QColor, QFont, QPixmap, QPainter, QBrush, QIcon
 
@@ -19,9 +19,147 @@ from ui.stats_dialog import StatsDialog
 from ui.tray_icon import TrayIcon
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 logger = logging.getLogger("vibe_pet")
+
+
+class WordCountMonitorThread(QThread):
+    selection_detected = pyqtSignal()
+    
+    def __init__(self, config_manager, parent=None):
+        super().__init__(parent)
+        self.config = config_manager
+        self.running = True
+        
+    def stop(self):
+        self.running = False
+        self.wait(1000)
+        
+    def run(self):
+        import win32api
+        import win32con
+        import time
+        
+        is_pressed = False
+        press_pos = (0, 0)
+        press_time = 0.0
+        last_release_time = 0.0
+        
+        logger.info("WordCountMonitorThread background loop running.")
+        while self.running:
+            # 仅在启用划词统计时监控
+            if not self.config.get("word_count_enabled", False):
+                time.sleep(0.5)
+                continue
+                
+            try:
+                # 获取左键状态
+                state = win32api.GetAsyncKeyState(win32con.VK_LBUTTON)
+                is_down = (state < 0)
+                
+                if is_down and not is_pressed:
+                    # 左键按下
+                    is_pressed = True
+                    press_pos = win32api.GetCursorPos()
+                    press_time = time.time()
+                elif not is_down and is_pressed:
+                    # 左键释放
+                    is_pressed = False
+                    release_pos = win32api.GetCursorPos()
+                    release_time = time.time()
+                    
+                    # 距离判定
+                    dist = ((release_pos[0] - press_pos[0])**2 + (release_pos[1] - press_pos[1])**2)**0.5
+                    
+                    # 双击判定
+                    time_since_last_release = press_time - last_release_time
+                    
+                    if dist > 8 or time_since_last_release < 0.4:
+                        # 触发信号
+                        self.selection_detected.emit()
+                        
+                    last_release_time = release_time
+            except Exception as e:
+                logger.error(f"Error checking global mouse selection: {e}")
+                
+            time.sleep(0.05)
+        logger.info("WordCountMonitorThread background loop stopped.")
+
+
+class WordCountCard(QWidget):
+    """ 独立悬浮小卡片用于显示划词字数 """
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) # 鼠标穿透
+        
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(10, 8, 10, 8)
+        
+        self.lbl_text = QLabel(self)
+        self.lbl_text.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.Bold))
+        self.layout.addWidget(self.lbl_text)
+        
+        self.opacity_effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.opacity_effect)
+        self.opacity_effect.setOpacity(0.0)
+        
+        self.fade_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
+        self.fade_animation.setDuration(250)
+        
+        self.hide_timer = QTimer(self)
+        self.hide_timer.setSingleShot(True)
+        self.hide_timer.timeout.connect(self.fade_out)
+        
+    def show_count(self, count, x, y, is_dark=False):
+        self.lbl_text.setText(f"📝 选区: {count} 字")
+        
+        if is_dark:
+            bg_color = "rgba(43, 43, 53, 220)"
+            border_color = "rgba(129, 199, 132, 200)"
+            text_color = "#e0e0e6"
+        else:
+            bg_color = "rgba(255, 255, 255, 230)"
+            border_color = "rgba(46, 125, 50, 180)"
+            text_color = "#2e7d32"
+            
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                border-radius: 6px;
+            }}
+            QLabel {{
+                color: {text_color};
+                border: none;
+                background-color: transparent;
+            }}
+        """)
+        
+        self.adjustSize()
+        # 将卡片位置居中放置在桌宠上方
+        self.move(x - self.width() // 2, y - self.height() - 10)
+        self.show()
+        
+        self.fade_animation.stop()
+        self.fade_animation.setStartValue(self.opacity_effect.opacity())
+        self.fade_animation.setEndValue(1.0)
+        self.fade_animation.start()
+        
+        self.hide_timer.start(3000) # 显示3秒后淡出
+        
+    def fade_out(self):
+        self.fade_animation.stop()
+        self.fade_animation.setStartValue(self.opacity_effect.opacity())
+        self.fade_animation.setEndValue(0.0)
+        try:
+            self.fade_animation.finished.disconnect()
+        except Exception:
+            pass
+        self.fade_animation.finished.connect(self.close)
+        self.fade_animation.start()
 
 
 class PetWindow(QWidget):
@@ -93,6 +231,12 @@ class PetWindow(QWidget):
         # 启动时检测更新（延迟5秒，避免影响启动速度）
         QTimer.singleShot(5000, self._check_for_updates)
 
+        # 初始化划词监测线程与卡片
+        self.word_count_thread = WordCountMonitorThread(self.config, self)
+        self.word_count_thread.selection_detected.connect(self.on_selection_detected)
+        self.word_count_thread.start()
+        self.word_count_card = None
+
         logger.info("Pet Window initialized.")
 
     def setup_ui(self):
@@ -157,7 +301,7 @@ class PetWindow(QWidget):
 
     def _apply_sys_panel_style(self):
         """ Apply light/dark style to sys_panel based on configuration """
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             self.sys_panel.setStyleSheet("""
                 QLabel {
@@ -181,7 +325,7 @@ class PetWindow(QWidget):
 
     def _apply_msg_style(self, msg, is_warning=False):
         """ Apply light/dark styling to QMessageBox based on theme """
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             msg.setStyleSheet(f"""
                 QMessageBox {{
@@ -558,7 +702,7 @@ class PetWindow(QWidget):
         # 从配置读取气泡透明度（默认1.0=不透明）
         opacity = self.config.get("bubble_opacity", 1.0)
         alpha = int(opacity * 255)
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             self.bubble.setStyleSheet(f"""
                 QLabel {{
@@ -830,7 +974,7 @@ class PetWindow(QWidget):
         act_exit = menu.addAction("退出")
 
         # Apply theme-based style to menu
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         if is_dark:
             menu.setStyleSheet("""
                 QMenu {
@@ -950,7 +1094,7 @@ class PetWindow(QWidget):
         self._apply_sys_panel_style()
 
         # 重新应用主题到所有活动对话框
-        theme_val = self.config.get("theme_mode", "dark")
+        theme_val = self.config.get("theme_mode", "light")
         for d in self.active_dialogs:
             if hasattr(d, "apply_styles"):
                 # 如果是 StatsDialog，同步它的 self.theme_mode 并刷新
@@ -1015,7 +1159,7 @@ class PetWindow(QWidget):
             scaled_pixmap = pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             msg.setIconPixmap(scaled_pixmap)
         
-        is_dark = (self.config.get("theme_mode", "dark") == "dark")
+        is_dark = (self.config.get("theme_mode", "light") == "dark")
         link_color = "#81c784" if is_dark else "#2e7d32"
         
         msg.setText(
@@ -1042,9 +1186,102 @@ class PetWindow(QWidget):
         self.active_dialogs.append(msg)
         msg.finished.connect(lambda: self.active_dialogs.remove(msg))
 
+    @pyqtSlot()
+    def on_selection_detected(self):
+        """ 监测到可能存在划词选择，执行剪贴板备份、模拟复制及字数统计 """
+        if not self.config.get("word_count_enabled", False):
+            return
+            
+        clipboard = QApplication.clipboard()
+        # 1. 备份原先的剪贴板内容 (MimeData 包含各种格式，能进行深度还原，避免指针实效)
+        old_mime = clipboard.mimeData()
+        backup_mime = QMimeData()
+        if old_mime:
+            for fmt in old_mime.formats():
+                try:
+                    backup_mime.setData(fmt, old_mime.data(fmt))
+                except Exception:
+                    pass
+        
+        # 2. 发送全局 Ctrl+C 键
+        import win32api
+        import win32con
+        import time
+        
+        win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(0x43, 0, 0, 0) # 'C'键
+        time.sleep(0.05) # 给 Windows 几十毫秒让系统处理按键与拷贝
+        win32api.keybd_event(0x43, 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+        
+        # 3. 读取复制的文字并统计
+        time.sleep(0.01)
+        selected_text = clipboard.text()
+        
+        # 4. 立即还原原先的剪贴板内容，使用户无感知
+        if old_mime:
+            clipboard.setMimeData(backup_mime)
+            
+        # 5. 进行字数计算
+        if not selected_text:
+            return
+            
+        selected_text = selected_text.strip()
+        if not selected_text:
+            return
+            
+        # 汉字数与英文单词数统计
+        import re
+        # 汉字
+        cn_chars = re.findall(r'[\u4e00-\u9fff]', selected_text)
+        cn_count = len(cn_chars)
+        
+        # 英文/数字单词 (中文字符替换为空格)
+        text_no_cn = re.sub(r'[\u4e00-\u9fff]', ' ', selected_text)
+        en_words = re.findall(r'[a-zA-Z0-9\-\']+', text_no_cn)
+        en_count = len(en_words)
+        
+        total_count = cn_count + en_count
+        if total_count <= 0:
+            return
+            
+        # 6. 显示字数
+        mode = self.config.get("word_count_mode", "bubble")
+        if mode == "bubble":
+            # 模式 A：桌宠对话气泡模式
+            msg = f"📝 选区字数: {total_count} 字"
+            if cn_count > 0 and en_count > 0:
+                msg += f"\n({cn_count}汉字 + {en_count}单词)"
+            self.show_bubble_message(msg)
+            # 3秒后自动隐藏气泡
+            QTimer.singleShot(3000, self.bubble.hide)
+        else:
+            # 模式 B：独立悬浮卡片模式
+            if self.word_count_card is not None:
+                try:
+                    self.word_count_card.close()
+                except Exception:
+                    pass
+            
+            # 创建新的悬浮卡片，定位在桌宠正上方
+            self.word_count_card = WordCountCard()
+            is_dark = (self.config.get("theme_mode", "light") == "dark")
+            # 桌宠中心的屏幕坐标
+            pet_rect = self.geometry()
+            x = pet_rect.x() + pet_rect.width() // 2
+            y = pet_rect.y() + self.bubble_height # 桌宠头部坐标（位于气泡下方）
+            self.word_count_card.show_count(total_count, x, y, is_dark)
+
     def quit_application(self):
         """ Gracefully exit application """
         logger.info("Application shutdown requested via UI context menu.")
+        # 停止系统监控线程
+        if hasattr(self, '_sys_monitor_thread') and self._sys_monitor_thread:
+            self._sys_monitor_thread.stop()
+        # 停止划词监测线程
+        if hasattr(self, 'word_count_thread') and self.word_count_thread:
+            self.word_count_thread.stop()
+            
         # Trigger application exit
         from PyQt6.QtWidgets import QApplication
         QApplication.quit()
