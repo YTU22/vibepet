@@ -71,10 +71,11 @@ class TodoItemWidget(QWidget):
 
 class TodoWindow(QWidget):
     """ 便签待办清单窗口 """
-    def __init__(self, db_manager, config_manager, parent=None):
+    def __init__(self, db_manager, config_manager, main_win=None, parent=None):
         super().__init__(parent)
         self.db = db_manager
         self.config = config_manager
+        self.main_win = main_win
 
         # 设置窗口标志：无边框、工具悬浮窗（不在任务栏显示）、置顶
         self.setWindowFlags(
@@ -401,7 +402,7 @@ class TodoWindow(QWidget):
         self.hide()
         self.config.set("todo_visible", False)
         # 发送设置变更通知，以便桌宠菜单更新同步
-        main_win = self.parent()
+        main_win = self.main_win
         if main_win and hasattr(main_win, 'on_todo_window_toggled'):
             main_win.on_todo_window_toggled(False)
 

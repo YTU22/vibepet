@@ -807,7 +807,7 @@ class PetWindow(QWidget):
 
         if visible:
             if self.todo_window is None:
-                self.todo_window = TodoWindow(self.db, self.config, self)
+                self.todo_window = TodoWindow(self.db, self.config, self, None)
             self.todo_window.apply_theme()
             self.todo_window.reload_todos()
             self.todo_window.show()
@@ -1238,9 +1238,11 @@ class PetWindow(QWidget):
         # 重新应用系统监控面板的主题样式
         self._apply_sys_panel_style()
 
-        # 重新应用主题到便签窗口
+        # 重新应用主题与显示状态到便签窗口
         if getattr(self, "todo_window", None) is not None:
             self.todo_window.apply_theme()
+        todo_visible = self.config.get("todo_visible", False)
+        self.toggle_todo_window(todo_visible)
 
         # 重新应用主题到所有活动对话框
         theme_val = self.config.get("theme_mode", "light")
