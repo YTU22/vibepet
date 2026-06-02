@@ -87,81 +87,6 @@ class WordCountMonitorThread(QThread):
         logger.info("WordCountMonitorThread background loop stopped.")
 
 
-class WordCountCard(QWidget):
-    """ 独立悬浮小卡片用于显示划词字数 """
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) # 鼠标穿透
-        
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 8, 10, 8)
-        
-        self.lbl_text = QLabel(self)
-        self.lbl_text.setFont(QFont("Microsoft YaHei", 9, QFont.Weight.Bold))
-        self.layout.addWidget(self.lbl_text)
-        
-        self.opacity_effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self.opacity_effect)
-        self.opacity_effect.setOpacity(0.0)
-        
-        self.fade_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.fade_animation.setDuration(250)
-        
-        self.hide_timer = QTimer(self)
-        self.hide_timer.setSingleShot(True)
-        self.hide_timer.timeout.connect(self.fade_out)
-        
-    def show_count(self, count, x, y, is_dark=False):
-        self.lbl_text.setText(f"📝 选区: {count} 字")
-        
-        if is_dark:
-            bg_color = "rgba(43, 43, 53, 220)"
-            border_color = "rgba(129, 199, 132, 200)"
-            text_color = "#e0e0e6"
-        else:
-            bg_color = "rgba(255, 255, 255, 230)"
-            border_color = "rgba(46, 125, 50, 180)"
-            text_color = "#2e7d32"
-            
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {bg_color};
-                border: 1px solid {border_color};
-                border-radius: 6px;
-            }}
-            QLabel {{
-                color: {text_color};
-                border: none;
-                background-color: transparent;
-            }}
-        """)
-        
-        self.adjustSize()
-        # 将卡片位置居中放置在桌宠上方
-        self.move(x - self.width() // 2, y - self.height() - 10)
-        self.show()
-        
-        self.fade_animation.stop()
-        self.fade_animation.setStartValue(self.opacity_effect.opacity())
-        self.fade_animation.setEndValue(1.0)
-        self.fade_animation.start()
-        
-        self.hide_timer.start(3000) # 显示3秒后淡出
-        
-    def fade_out(self):
-        self.fade_animation.stop()
-        self.fade_animation.setStartValue(self.opacity_effect.opacity())
-        self.fade_animation.setEndValue(0.0)
-        try:
-            self.fade_animation.finished.disconnect()
-        except Exception:
-            pass
-        self.fade_animation.finished.connect(self.close)
-        self.fade_animation.start()
-
-
 class PetWindow(QWidget):
     def __init__(self, db_manager, config_manager, reminder_manager, parent=None):
         super().__init__(parent)
@@ -231,11 +156,10 @@ class PetWindow(QWidget):
         # 启动时检测更新（延迟5秒，避免影响启动速度）
         QTimer.singleShot(5000, self._check_for_updates)
 
-        # 初始化划词监测线程与卡片
+        # 初始化划词监测线程
         self.word_count_thread = WordCountMonitorThread(self.config, self)
         self.word_count_thread.selection_detected.connect(self.on_selection_detected)
         self.word_count_thread.start()
-        self.word_count_card = None
 
         logger.info("Pet Window initialized.")
 
@@ -1245,32 +1169,13 @@ class PetWindow(QWidget):
         if total_count <= 0:
             return
             
-        # 6. 显示字数
-        mode = self.config.get("word_count_mode", "bubble")
-        if mode == "bubble":
-            # 模式 A：桌宠对话气泡模式
-            msg = f"📝 选区字数: {total_count} 字"
-            if cn_count > 0 and en_count > 0:
-                msg += f"\n({cn_count}汉字 + {en_count}单词)"
-            self.show_bubble_message(msg)
-            # 3秒后自动隐藏气泡
-            QTimer.singleShot(3000, self.bubble.hide)
-        else:
-            # 模式 B：独立悬浮卡片模式
-            if self.word_count_card is not None:
-                try:
-                    self.word_count_card.close()
-                except Exception:
-                    pass
-            
-            # 创建新的悬浮卡片，定位在桌宠正上方
-            self.word_count_card = WordCountCard()
-            is_dark = (self.config.get("theme_mode", "light") == "dark")
-            # 桌宠中心的屏幕坐标
-            pet_rect = self.geometry()
-            x = pet_rect.x() + pet_rect.width() // 2
-            y = pet_rect.y() + self.bubble_height # 桌宠头部坐标（位于气泡下方）
-            self.word_count_card.show_count(total_count, x, y, is_dark)
+        # 6. 显示字数 (始终展示在对话气泡中)
+        msg = f"📝 选区字数: {total_count} 字"
+        if cn_count > 0 and en_count > 0:
+            msg += f"\n({cn_count}汉字 + {en_count}单词)"
+        self.show_bubble_message(msg)
+        # 3秒后自动隐藏气泡
+        QTimer.singleShot(3000, self.bubble.hide)
 
     def quit_application(self):
         """ Gracefully exit application """

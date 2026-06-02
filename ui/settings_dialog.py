@@ -11,7 +11,8 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QCheckBox,
     QSpinBox, QTextEdit, QPushButton, QGroupBox, QFormLayout, QMessageBox,
     QSlider, QTabWidget, QWidget as QWidgetBase, QListWidget, QListWidgetItem,
-    QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton, QProgressBar
+    QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton, QProgressBar,
+    QListView
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, QColor, QFont
@@ -378,6 +379,7 @@ class SettingsDialog(QDialog):
 
         # 主题风格设置
         self.combo_theme = QComboBox()
+        self.combo_theme.setView(QListView())
         self.combo_theme.addItems(["暗黑模式", "明亮模式"])
         self.combo_theme.setMinimumWidth(140)
         pet_form.addRow("界面主题风格:", self.combo_theme)
@@ -599,16 +601,6 @@ class SettingsDialog(QDialog):
         
         self.cb_word_count_enabled = QCheckBox("启用全局划词字数统计")
         word_count_inner.addWidget(self.cb_word_count_enabled)
-        
-        word_count_form = QFormLayout()
-        word_count_form.setSpacing(10)
-        word_count_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        
-        self.combo_word_count_mode = QComboBox()
-        self.combo_word_count_mode.addItems(["桌宠对话气泡", "独立悬浮卡片"])
-        self.combo_word_count_mode.setMinimumWidth(140)
-        word_count_form.addRow("显示方式:", self.combo_word_count_mode)
-        word_count_inner.addLayout(word_count_form)
         
         word_count_group.setLayout(word_count_inner)
         sysmon_layout.addWidget(word_count_group)
@@ -1056,8 +1048,6 @@ class SettingsDialog(QDialog):
         
         # 划词统计设置
         self.cb_word_count_enabled.setChecked(self.config.get("word_count_enabled", False))
-        word_mode = self.config.get("word_count_mode", "bubble")
-        self.combo_word_count_mode.setCurrentIndex(1 if word_mode == "card" else 0)
 
         # 加载各时段概率
         probs = self.config.get("emotion_probabilities", {})
@@ -1163,8 +1153,7 @@ class SettingsDialog(QDialog):
 
         # 划词统计设置
         self.config.set("word_count_enabled", self.cb_word_count_enabled.isChecked())
-        word_mode_val = "card" if self.combo_word_count_mode.currentIndex() == 1 else "bubble"
-        self.config.set("word_count_mode", word_mode_val)
+        self.config.set("word_count_mode", "bubble")
 
         # 随机情绪设置
         self.config.set("random_emotions", self.cb_random_emotions.isChecked())
@@ -1348,8 +1337,6 @@ class SettingsDialog(QDialog):
         self.cb_show_gpu.setChecked(items["gpu"])
         self.sb_sysmon_interval.setValue(DEFAULT_CONFIG["sys_monitor_interval"])
         self.cb_word_count_enabled.setChecked(DEFAULT_CONFIG["word_count_enabled"])
-        word_mode = DEFAULT_CONFIG["word_count_mode"]
-        self.combo_word_count_mode.setCurrentIndex(1 if word_mode == "card" else 0)
         self.settings_changed.emit()
         self._show_ok("系统监控已恢复为默认值！")
 
