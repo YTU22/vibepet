@@ -380,6 +380,8 @@ class TodoWindow(QWidget):
             self.txt_input.clear()
             self.reload_todos()
             logger.info(f"Added todo item id={todo_id}")
+            if self.main_win and hasattr(self.main_win, "on_todo_added"):
+                self.main_win.on_todo_added(text)
 
     def on_todo_status_changed(self, todo_id, completed):
         """ 待办勾选状态改变回调 """
@@ -387,6 +389,8 @@ class TodoWindow(QWidget):
         # 为了配合完成的事项沉底逻辑，重新加载列表
         self.reload_todos()
         logger.info(f"Updated todo item id={todo_id} status={completed}")
+        if self.main_win and hasattr(self.main_win, "on_todo_status_changed"):
+            self.main_win.on_todo_status_changed(todo_id, completed)
 
     def on_todo_deleted(self, todo_id, item_widget):
         """ 待办删除回调 """

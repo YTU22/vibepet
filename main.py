@@ -86,7 +86,7 @@ def main():
     try:
         config_mgr = ConfigManager()
         db_mgr = DatabaseManager()
-        reminder_mgr = ReminderManager(config_mgr)
+        reminder_mgr = ReminderManager(config_mgr, db_mgr)
         
         # 首次运行：创建桌面快捷方式
         if config_mgr.get("first_run", True):

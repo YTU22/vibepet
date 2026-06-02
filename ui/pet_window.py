@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -1494,3 +1494,60 @@ class PetWindow(QWidget):
                 logger.info(f"Current version {APP_VERSION} is up to date.")
         except Exception as e:
             logger.warning(f"Auto update check failed: {e}")
+
+    def on_todo_added(self, text):
+        """ 便签新增待办的回调 """
+        import random
+        # 限制显示长度防止超出气泡范围
+        short_text = text if len(text) <= 15 else text[:12] + "..."
+        phrases = [
+            f"冲呀！新增待办：【{short_text}】，加油搞定它！🔥",
+            f"记在便签上了，加油干！💪",
+            f"任务又多了一个，准备开始战斗吧！✨",
+            f"收到新挑战！等你的好消息哦～👍"
+        ]
+        self.show_bubble_message(random.choice(phrases))
+        
+        # 播放开心/兴奋动画
+        self.load_animation("happy")
+        # 5秒后恢复默认状态
+        QTimer.singleShot(5000, lambda: self.load_animation("idle") if self.current_state == "happy" else None)
+
+    def on_todo_status_changed(self, todo_id, completed):
+        """ 便签待办状态发生改变的回调 """
+        import random
+        if completed:
+            # 检查是否所有待办都已经完成
+            todos = self.db.get_all_todos()
+            uncompleted_count = sum(1 for t in todos if not t["completed"])
+            
+            if uncompleted_count == 0:
+                # 所有待办完成！超级庆祝！
+                phrases = [
+                    "哇！所有待办都完成了！太强了！🏆",
+                    "任务全部扫光！今天简直效率爆表！🎉",
+                    "太棒了，全部搞定！现在是休息时间！🍵"
+                ]
+                self.show_bubble_message(random.choice(phrases))
+                self.load_animation("happy")
+                QTimer.singleShot(6000, lambda: self.load_animation("idle") if self.current_state == "happy" else None)
+            else:
+                # 搞定其中一项
+                phrases = [
+                    "搞定一项！太棒了！✨",
+                    "消灭了一个任务，继续保持！👍",
+                    "Nice! 又少了一个待办！🎉",
+                    "干得漂亮！离终点又近了一步！"
+                ]
+                self.show_bubble_message(random.choice(phrases))
+                self.load_animation("happy")
+                QTimer.singleShot(5000, lambda: self.load_animation("idle") if self.current_state == "happy" else None)
+        else:
+            # 取消勾选（任务重新回来）
+            phrases = [
+                "嗯？这个还要再做一次吗？👀",
+                "任务又回来了，加油解决它！💪",
+                "没关系，我们再战一轮！"
+            ]
+            self.show_bubble_message(random.choice(phrases))
+            self.load_animation("idle")

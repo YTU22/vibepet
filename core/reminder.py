@@ -8,8 +8,9 @@ logger = logging.getLogger("vibe_pet")
 
 
 class ReminderManager:
-    def __init__(self, config_manager):
+    def __init__(self, config_manager, db_manager=None):
         self.config = config_manager
+        self.db = db_manager
         self.toaster = ToastNotifier()
 
         # Keep track of when reminders last fired to enforce the 30-minute cooldown
@@ -164,6 +165,36 @@ class ReminderManager:
         if now - self.last_emotion_check < self.emotion_check_interval:
             return
         self.last_emotion_check = now
+
+        # 检查并触发未完成待办事项的随机提醒 (10% 概率)
+        if self.db:
+            try:
+                todos = self.db.get_all_todos()
+                pending_todos = [t for t in todos if not t["completed"]]
+                if pending_todos:
+                    roll_todo = random.randint(0, 99)
+                    if roll_todo < 10:
+                        todo_item = random.choice(pending_todos)
+                        task_desc = todo_item["content"]
+                        if len(task_desc) > 15:
+                            task_desc = task_desc[:12] + "..."
+                        
+                        phrases = [
+                            f"今天还有待办任务没做完哦：【{task_desc}】✍️",
+                            f"别忘了还有待办：【{task_desc}】在等你哦！✨",
+                            f"加油呀，我们一起把【{task_desc}】搞定吧！💪"
+                        ]
+                        
+                        duration = random.randint(15, 30)
+                        self.random_emotion_active = True
+                        self.random_emotion_state = "happy"
+                        self.random_emotion_until = now + duration
+                        logger.info(f"Random todo reminder triggered: {task_desc}")
+                        if self.bubble_callback:
+                            self.bubble_callback(random.choice(phrases))
+                        return
+            except Exception as e:
+                logger.error(f"Failed to check pending todos in reminder: {e}")
 
         # 使用 0-99 的随机整数，确保 100% 概率一定触发
         roll = random.randint(0, 99)
