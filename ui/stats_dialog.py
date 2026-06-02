@@ -622,26 +622,34 @@ class StatsDialog(QDialog):
                 QPushButton {
                     background-color: #37474f;
                     color: #ffffff;
-                    border: none;
+                    border: 1px solid #455a64;
                     border-radius: 6px;
                     padding: 8px 16px;
                     font-weight: bold;
                     font-size: 13px;
                 }
                 QPushButton:hover {
-                    background-color: #455a64;
+                    background-color: #3d4f58;
+                    color: #81c784;
+                    border: 1px solid #81c784;
                 }
                 QPushButton:pressed {
-                    background-color: #263238;
+                    background-color: #212c31;
+                    color: #66bb6a;
+                    border: 1px solid #66bb6a;
                 }
                 QPushButton[text="导出 CSV"] {
                     background-color: #00796b;
+                    color: #ffffff;
+                    border: 1px solid #00796b;
                 }
                 QPushButton[text="导出 CSV"]:hover {
                     background-color: #00897b;
+                    border: 1px solid #26a69a;
                 }
                 QPushButton[text="导出 CSV"]:pressed {
                     background-color: #004d40;
+                    border: 1px solid #00695c;
                 }
                 #BtnExpand {
                     margin-top: 5px;
@@ -774,21 +782,27 @@ class StatsDialog(QDialog):
                     font-size: 13px;
                 }
                 QPushButton:hover {
-                    background-color: #d6d6d6;
+                    background-color: #e8f5e9;
+                    color: #2e7d32;
+                    border: 1px solid #2e7d32;
                 }
                 QPushButton:pressed {
-                    background-color: #b0b0b0;
+                    background-color: #c8e6c9;
+                    color: #1b5e20;
+                    border: 1px solid #1b5e20;
                 }
                 QPushButton[text="导出 CSV"] {
                     background-color: #2e7d32;
                     color: #ffffff;
-                    border: none;
+                    border: 1px solid #2e7d32;
                 }
                 QPushButton[text="导出 CSV"]:hover {
                     background-color: #388e3c;
+                    border: 1px solid #4caf50;
                 }
                 QPushButton[text="导出 CSV"]:pressed {
                     background-color: #1b5e20;
+                    border: 1px solid #388e3c;
                 }
                 #BtnExpand {
                     margin-top: 5px;
