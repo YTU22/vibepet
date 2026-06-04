@@ -135,6 +135,13 @@ class TodoWindow(QWidget):
 
         header.addStretch()
 
+        self.btn_min = QPushButton("－", self)
+        self.btn_min.setObjectName("TodoMinBtn")
+        self.btn_min.setFixedSize(20, 20)
+        self.btn_min.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_min.clicked.connect(self.showMinimized)
+        header.addWidget(self.btn_min)
+
         self.btn_close = QPushButton("×", self)
         self.btn_close.setObjectName("TodoCloseBtn")
         self.btn_close.setFixedSize(20, 20)
@@ -214,6 +221,16 @@ class TodoWindow(QWidget):
                 #TodoTitle {
                     color: #713f12; /* 深褐色手写感 */
                 }
+                #TodoMinBtn {
+                    border: none;
+                    background: transparent;
+                    color: #ca8a04;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                #TodoMinBtn:hover {
+                    color: #854d0e;
+                }
                 #TodoCloseBtn {
                     border: none;
                     background: transparent;
@@ -288,6 +305,16 @@ class TodoWindow(QWidget):
                 }
                 #TodoTitle {
                     color: #d8b4fe; /* 淡紫色 */
+                }
+                #TodoMinBtn {
+                    border: none;
+                    background: transparent;
+                    color: #8b5cf6;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                #TodoMinBtn:hover {
+                    color: #a78bfa;
                 }
                 #TodoCloseBtn {
                     border: none;

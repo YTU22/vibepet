@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -161,7 +161,7 @@ class SettingsDialog(QDialog):
 
         self.setWindowTitle("VibePet - 系统设置")
         # Prevent closing child widgets closing parent
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
         
         # 动态自适应屏幕分辨率与DPI缩放比例，防止低分辨率或高DPI缩放下设置界面超出屏幕而无法拖动
         from PyQt6.QtGui import QGuiApplication

@@ -32,7 +32,7 @@ class StatsDialog(QDialog):
         
         self.setWindowTitle("统计看板")
         self.resize(700, 500)
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint | Qt.WindowType.WindowMinimizeButtonHint)
         
         # 设置窗口图标
         icon_path = resource_path("assets/icon.png")

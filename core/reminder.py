@@ -2,7 +2,9 @@ import datetime
 import time
 import random
 import logging
+import os
 from win10toast import ToastNotifier
+from utils.helpers import resource_path
 
 logger = logging.getLogger("vibe_pet")
 
@@ -29,6 +31,8 @@ class ReminderManager:
         self.work_start_time = 0
         self.happy_until = 0  # Timestamp until which "happy" animation remains active
         self.rule_animation_until = {}  # 记录各提醒规则动画的到期时间戳
+        self.last_thresholds = {}       # 记录各规则上次检测时的阈值，以便动态延长时间时重置冷却时间
+        self.last_switches = {}         # 记录各规则上次检测时的开关状态
 
         # State tracking for late night continuous active time
         self.late_night_active_seconds = 0
@@ -61,11 +65,16 @@ class ReminderManager:
     def show_toast(self, title, message):
         """ Show Windows Toast notification in a background thread """
         try:
+            # 使用项目自有的 .ico 图标，避免 win10toast 在 PyInstaller 打包环境因找不到默认 favicon.ico 崩溃
+            icon = resource_path("assets/icon.ico")
+            if not os.path.exists(icon):
+                icon = None
+                
             # win10toast's show_toast with threaded=True runs asynchronously
             self.toaster.show_toast(
                 title,
                 message,
-                icon_path=None,
+                icon_path=icon,
                 duration=5,
                 threaded=True
             )
@@ -260,14 +269,25 @@ class ReminderManager:
 
         # 2. Evaluate positive incentive state machine (game -> work transition)
         positive_rule = next((r for r in rules if r["id"] == "positive"), None)
-        if positive_rule and self.config.get_reminder_switch("positive"):
+        positive_switch = self.config.get_reminder_switch("positive")
+        
+        if positive_rule and positive_switch:
+            threshold_val = self.config.get_threshold(positive_rule["threshold_key"])
+            
+            # 动态延长阈值或重新开启时重置冷却时间
+            if ("positive" in self.last_thresholds and self.last_thresholds["positive"] != threshold_val) or \
+               (self.last_switches.get("positive") == False and positive_switch):
+                logger.info("Positive incentive rule configuration changed. Resetting cooldown.")
+                self.last_triggered["positive"] = 0
+            self.last_thresholds["positive"] = threshold_val
+            self.last_switches["positive"] = positive_switch
+            
             if current_category == "work" and not is_idle:
                 if self.last_category == "game" and self.work_start_time == 0:
                     self.work_start_time = now
                     logger.info("Category switched from game to work. Positive timer started.")
                 elif self.work_start_time > 0:
                     work_duration = now - self.work_start_time
-                    threshold_val = self.config.get_threshold(positive_rule["threshold_key"])
                     threshold_seconds = threshold_val * 60
                     if work_duration >= threshold_seconds:
                         bubble_text = positive_rule.get("bubble_text", "加油，高效产出！").format(threshold=int(threshold_val))
@@ -297,10 +317,23 @@ class ReminderManager:
                 continue
                 
             rule_id = rule["id"]
-            if not self.config.get_reminder_switch(rule_id):
+            switch_on = self.config.get_reminder_switch(rule_id)
+            
+            # 记录并对比开关状态
+            if not switch_on:
+                self.last_switches[rule_id] = False
                 continue
                 
             threshold_val = self.config.get_threshold(rule["threshold_key"])
+            
+            # 如果阈值发生变化（比如用户延长了上限）或者开关从关到开，则重置冷却时间以便立刻响应新阈值
+            if (rule_id in self.last_thresholds and self.last_thresholds[rule_id] != threshold_val) or \
+               (self.last_switches.get(rule_id) == False and switch_on):
+                logger.info(f"Rule '{rule_id}' configuration changed (threshold: {self.last_thresholds.get(rule_id)} -> {threshold_val}). Resetting cooldown.")
+                self.last_triggered[rule_id] = 0
+                
+            self.last_thresholds[rule_id] = threshold_val
+            self.last_switches[rule_id] = switch_on
             
             # Setup evaluation context (values in minutes for user convenience)
             context = {

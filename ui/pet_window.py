@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.2.2"
+APP_VERSION = "1.2.3"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -870,7 +870,10 @@ class PetWindow(QWidget):
     def toggle_todo_window(self, visible=None):
         """ 切换便签待办窗口的显示与隐藏 """
         if visible is None:
-            visible = not (self.todo_window is not None and self.todo_window.isVisible())
+            if self.todo_window is not None and self.todo_window.isMinimized():
+                visible = True
+            else:
+                visible = not (self.todo_window is not None and self.todo_window.isVisible())
 
         self.config.set("todo_visible", visible)
 
@@ -879,8 +882,12 @@ class PetWindow(QWidget):
                 self.todo_window = TodoWindow(self.db, self.config, self, None)
             self.todo_window.apply_theme()
             self.todo_window.reload_todos()
-            self.todo_window.show()
+            if self.todo_window.isMinimized():
+                self.todo_window.showNormal()
+            else:
+                self.todo_window.show()
             self.todo_window.raise_()
+            self.todo_window.activateWindow()
         else:
             if self.todo_window is not None:
                 self.todo_window.hide()
@@ -1428,9 +1435,24 @@ class PetWindow(QWidget):
         
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setWindowTitle("VibePet 健康警告")
-        msg.setText("您今日累计使用电脑已超过 8 小时！\n建议您现在离开电脑，闭眼休息 10 分钟或起身活动活动！")
+        
+        # 动态获取并格式化真实的警告限时
+        limit_mins = self.config.get_threshold("fatigue_minutes")
+        limit_hours = limit_mins / 60.0
+        if limit_hours.is_integer():
+            time_str = f"{int(limit_hours)} 小时"
+        else:
+            time_str = f"{limit_hours:.1f} 小时 ({limit_mins} 分钟)"
+            
+        msg.setText(f"您今日累计使用电脑已超过 {time_str}！\n建议您现在离开电脑，闭眼休息 10 分钟或起身活动活动！")
         self._apply_msg_style(msg, is_warning=True)
+        
+        # 设置窗口标志：置顶且支持最小化，并强制显示在前台
+        msg.setWindowFlags(msg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowMinimizeButtonHint)
         msg.show()
+        msg.raise_()
+        msg.activateWindow()
+        
         # Non-blocking, stays on screen
         self.active_dialogs.append(msg)
         msg.finished.connect(lambda: self.active_dialogs.remove(msg))
