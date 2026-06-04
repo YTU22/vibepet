@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -2627,6 +2627,29 @@ class SettingsDialog(QDialog):
                     height: 0px;
                 }
             """)
+        # Ensure combobox dropdown views (QListView) have the correct stylesheet applied directly to them
+        # This prevents Windows Dark Mode from overriding the popup background with black while using light theme text
+        combo_view_style = """
+            QListView {
+                background-color: #2b2b35;
+                color: #ffffff;
+                selection-background-color: #81c784;
+                selection-color: #1e1e24;
+                border: 1px solid #455a64;
+            }
+        """ if is_dark else """
+            QListView {
+                background-color: #ffffff;
+                color: #333333;
+                selection-background-color: #a5d6a7;
+                selection-color: #1b5e20;
+                border: 1px solid #cccccc;
+            }
+        """
+        if hasattr(self, "combo_theme") and self.combo_theme.view():
+            self.combo_theme.view().setStyleSheet(combo_view_style)
+        if hasattr(self, "combo_mirror") and self.combo_mirror.view():
+            self.combo_mirror.view().setStyleSheet(combo_view_style)
         
         # Update dynamic labels in the About tab
         link_color = "#81c784" if is_dark else "#2e7d32"
