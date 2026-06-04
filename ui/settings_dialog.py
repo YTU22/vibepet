@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.4"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -665,8 +665,27 @@ class SettingsDialog(QDialog):
         
         about_inner.addWidget(QLabel("实时监测软件时长，守护您的作息与健康！"))
         
+        # 下载源选择
+        mirror_layout = QHBoxLayout()
+        lbl_mirror = QLabel("下载加速通道:")
+        mirror_layout.addWidget(lbl_mirror)
+        self.combo_mirror = QComboBox()
+        self.combo_mirror.setView(QListView())
+        self.combo_mirror.addItems([
+            "自动选择 (多镜像测速)",
+            "加速通道 A (Moeyy - 推荐)",
+            "加速通道 B (GHProxy)",
+            "加速通道 C (GHProxy Net)",
+            "直连 GitHub",
+            "官方备用通道"
+        ])
+        self.combo_mirror.setMinimumWidth(180)
+        mirror_layout.addWidget(self.combo_mirror)
+        mirror_layout.addStretch()
+        about_inner.addLayout(mirror_layout)
+
         # 检测更新区域
-        about_inner.addSpacing(15)
+        about_inner.addSpacing(10)
         self.btn_check_update = QPushButton("🔍 检测更新")
         self.btn_check_update.clicked.connect(self._check_for_update)
         about_inner.addWidget(self.btn_check_update)
@@ -838,25 +857,83 @@ class SettingsDialog(QDialog):
             progress = pyqtSignal(int)
             finished = pyqtSignal(bool, str)
             
-            def __init__(self, download_url="", parent=None):
+            def __init__(self, download_url="", mirror_pref="自动选择 (多镜像测速)", parent=None):
                 super().__init__(parent)
                 self.download_url = download_url
+                self.mirror_pref = mirror_pref
                 
             def run(self):
                 try:
                     app_dir = get_app_dir()
                     temp_zip = os.path.join(app_dir, "VibePet_update.zip")
                     
+                    # 各个加速源的地址映射
+                    mirrors = {
+                        "加速通道 A (Moeyy - 推荐)": ("Moeyy 镜像", f"https://github.moeyy.xyz/{self.download_url}"),
+                        "加速通道 B (GHProxy)": ("GHProxy 镜像", f"https://mirror.ghproxy.com/{self.download_url}"),
+                        "加速通道 C (GHProxy Net)": ("GHProxy Net 镜像", f"https://ghproxy.net/{self.download_url}"),
+                        "直连 GitHub": ("直连 GitHub", self.download_url),
+                        "官方备用通道": ("官方备用服务器", "https://vibeharbor.art/api/github/vibepet/download-latest")
+                    }
+                    
                     # 按照优先级排序的下载源列表
                     urls_to_try = []
                     if self.download_url:
-                        # 1. 国内加速代理 (CN Speedup Proxy) - 对国内用户极快且免梯子
-                        urls_to_try.append(("国内加速镜像(主)", f"https://mirror.ghproxy.com/{self.download_url}"))
-                        urls_to_try.append(("国内加速代理(备)", f"https://ghproxy.net/{self.download_url}"))
-                        # 2. 直连 GitHub - 针对有梯子/VPN 的用户
-                        urls_to_try.append(("直连 GitHub", self.download_url))
-                    # 3. 官方流式代理服务器 - 终极备用 (流式传输，在国外节点慢但稳定)
-                    urls_to_try.append(("官方备用服务器", "https://vibeharbor.art/api/github/vibepet/download-latest"))
+                        pref = self.mirror_pref
+                        if pref in mirrors:
+                            urls_to_try.append(mirrors[pref])
+                            logger.info(f"User preferred mirror: {pref}")
+                            
+                        order = [
+                            "加速通道 A (Moeyy - 推荐)",
+                            "加速通道 B (GHProxy)",
+                            "加速通道 C (GHProxy Net)",
+                            "直连 GitHub",
+                            "官方备用通道"
+                        ]
+                        
+                        if pref == "自动选择 (多镜像测速)":
+                            logger.info("Auto mirror select: testing latencies...")
+                            import concurrent.futures
+                            import time
+                            
+                            candidates = [
+                                ("加速通道 A (Moeyy - 推荐)", mirrors["加速通道 A (Moeyy - 推荐)"][1]),
+                                ("加速通道 B (GHProxy)", mirrors["加速通道 B (GHProxy)"][1]),
+                                ("加速通道 C (GHProxy Net)", mirrors["加速通道 C (GHProxy Net)"][1]),
+                                ("直连 GitHub", mirrors["直连 GitHub"][1])
+                            ]
+                            
+                            def test_mirror(item):
+                                m_name, m_url = item
+                                try:
+                                    # 测速请求 HEAD，超时限制为 1.5 秒
+                                    req = urllib.request.Request(m_url, headers={"User-Agent": "Mozilla/5.0"}, method="HEAD")
+                                    start = time.time()
+                                    with urllib.request.urlopen(req, timeout=1.5) as resp:
+                                        return time.time() - start, m_name
+                                except Exception:
+                                    return float('inf'), m_name
+                                    
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates)) as executor:
+                                results = list(executor.map(test_mirror, candidates))
+                                
+                            results.sort(key=lambda x: x[0])
+                            
+                            for latency, m_name in results:
+                                if latency < float('inf'):
+                                    logger.info(f"Speedtest: {m_name} latency={latency:.3f}s")
+                                    urls_to_try.append(mirrors[m_name])
+                                    
+                            for m_name in order:
+                                if mirrors[m_name] not in urls_to_try:
+                                    urls_to_try.append(mirrors[m_name])
+                        else:
+                            for m_name in order:
+                                if mirrors[m_name] not in urls_to_try:
+                                    urls_to_try.append(mirrors[m_name])
+                    else:
+                        urls_to_try.append(mirrors["官方备用通道"])
                     
                     last_error = ""
                     success = False
@@ -904,7 +981,8 @@ class SettingsDialog(QDialog):
                 except Exception as e:
                     self.finished.emit(False, str(e))
         
-        self._dl_thread = DownloadThread(self._download_url, self)
+        mirror_pref = self.combo_mirror.currentText()
+        self._dl_thread = DownloadThread(self._download_url, mirror_pref, self)
         self._dl_thread.progress.connect(self.progress_update.setValue)
         self._dl_thread.finished.connect(self._on_download_finished)
         self._dl_thread.start()
@@ -1074,6 +1152,14 @@ class SettingsDialog(QDialog):
         # 划词统计设置
         self.cb_word_count_enabled.setChecked(self.config.get("word_count_enabled", False))
 
+        # 加载下载加速镜像源设置
+        mirror_val = self.config.get("update_mirror", "自动选择 (多镜像测速)")
+        idx = self.combo_mirror.findText(mirror_val)
+        if idx >= 0:
+            self.combo_mirror.setCurrentIndex(idx)
+        else:
+            self.combo_mirror.setCurrentIndex(0)
+
         # 加载各时段概率
         probs = self.config.get("emotion_probabilities", {})
         day = probs.get("day", {})
@@ -1202,6 +1288,9 @@ class SettingsDialog(QDialog):
                 "tired": self.sb_night_tired.value()
             }
         })
+
+        # 保存下载加速镜像源设置
+        self.config.set("update_mirror", self.combo_mirror.currentText())
 
         self.config.save_config()
         # 发射信号通知主窗口应用新配置

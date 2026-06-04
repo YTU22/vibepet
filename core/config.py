@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {
     "theme_mode": "light",            # 默认主题模式：light/dark
     "word_count_enabled": False,      # 是否启用全局划词统计
     "word_count_mode": "bubble",      # 划词统计显示模式：bubble/card
+    "update_mirror": "自动选择 (多镜像测速)",
     # 宠物窗口外观与行为设置
     "pet_size": 200,                  # 宠物窗口大小（像素），默认200
     "window_x": None,                 # 窗口上次X坐标
