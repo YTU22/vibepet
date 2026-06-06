@@ -147,11 +147,11 @@ class ReminderManager:
         # 检查 tired（疲惫）- 所有状态都可能触发
         if tired_prob >= 100:
             target_emotion = "tired"
-        # 检查 sleep（睡眠）- 主要在 idle 状态触发
-        elif (is_idle or current_category == "idle") and sleep_prob >= 100:
+        # 检查 sleep（睡眠）- 100% 概率时强制触发，不受 idle 状态限制
+        elif sleep_prob >= 100:
             target_emotion = "sleep"
-        # 检查 happy（开心）- 主要在活跃状态触发
-        elif not is_idle and current_category in ("work", "other", "leisure") and happy_prob >= 100:
+        # 检查 happy（开心）- 100% 概率时强制触发，不受活跃状态限制
+        elif happy_prob >= 100:
             target_emotion = "happy"
 
         # 如果某个情绪概率为100%，持续保持该状态（不设置过期时间）
