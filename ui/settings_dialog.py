@@ -14,15 +14,45 @@ from PyQt6.QtWidgets import (
     QScrollArea, QFrame, QLineEdit, QComboBox, QAbstractButton, QProgressBar,
     QListView
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, pyqtProperty, QPropertyAnimation, QEasingCurve, QThread
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, QColor, QFont
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 
 logger = logging.getLogger("vibe_pet")
 
+
+class UpdateCheckThread(QThread):
+    # Emit: success, latest_version, download_url, error_msg
+    finished = pyqtSignal(bool, str, str, str)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+    def run(self):
+        try:
+            import urllib.request
+            import json
+            req = urllib.request.Request(
+                "https://vibeharbor.art/api/github/vibepet/latest",
+                headers={"User-Agent": "VibePet-UpdateChecker"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            latest = data.get("tag_name", "").lstrip("v")
+            download_url = ""
+            assets = data.get("assets", [])
+            if assets and isinstance(assets, list):
+                download_url = assets[0].get("browser_download_url", "")
+            
+            if not latest:
+                self.finished.emit(False, "", "", "无法获取最新版本信息")
+            else:
+                self.finished.emit(True, latest, download_url, "")
+        except Exception as e:
+            self.finished.emit(False, "", "", str(e))
 
 class AnimatedSwitch(QAbstractButton):
     def __init__(self, parent=None):
@@ -799,23 +829,13 @@ class SettingsDialog(QDialog):
         self.btn_check_update.setEnabled(False)
         self.btn_onekey_update.hide()
         
-        try:
-            req = urllib.request.Request(
-                "https://vibeharbor.art/api/github/vibepet/latest",
-                headers={"User-Agent": "VibePet-UpdateChecker"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            latest = data.get("tag_name", "").lstrip("v")
-            self._download_url = ""
-            assets = data.get("assets", [])
-            if assets and isinstance(assets, list):
-                self._download_url = assets[0].get("browser_download_url", "")
-            
-            if not latest:
-                self.lbl_update_status.setText("<span style='color:#ff9800;'>无法获取最新版本信息</span>")
-                return
-            
+        self._update_check_thread = UpdateCheckThread(self)
+        self._update_check_thread.finished.connect(self._on_update_check_finished)
+        self._update_check_thread.start()
+
+    def _on_update_check_finished(self, success, latest, download_url, error_msg):
+        self._download_url = download_url
+        if success:
             def parse_ver(v):
                 try:
                     parts = [int(x) for x in v.split(".")]
@@ -835,14 +855,14 @@ class SettingsDialog(QDialog):
                 self.btn_onekey_update.show()
             else:
                 self.lbl_update_status.setText("<span style='color:#81c784;'>✓ 当前已是最新版本</span>")
-        except urllib.error.URLError as e:
-            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>网络连接失败，请稍后重试</span>")
-            logger.warning(f"Update check failed: {e}")
-        except Exception as e:
-            self.lbl_update_status.setText(f"<span style='color:#ff9800;'>检测失败: {e}</span>")
-            logger.warning(f"Update check error: {e}")
-        finally:
-            self.btn_check_update.setEnabled(True)
+        else:
+            if "HTTP Error" in error_msg or "URLError" in error_msg or "timeout" in error_msg.lower():
+                self.lbl_update_status.setText(f"<span style='color:#ff9800;'>网络连接失败，请稍后重试</span>")
+            else:
+                self.lbl_update_status.setText(f"<span style='color:#ff9800;'>检测失败: {error_msg}</span>")
+            logger.warning(f"Update check failed: {error_msg}")
+        
+        self.btn_check_update.setEnabled(True)
 
     def _onekey_update(self):
         """ 一键下载更新：下载新 exe → 提示用户关闭 → 启动更新器替换 """

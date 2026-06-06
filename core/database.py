@@ -17,7 +17,10 @@ class DatabaseManager:
             self.db_path = db_path
             
         self.init_db()
-        self.auto_cleanup_data(30)
+        # 在后台线程中执行历史数据清理和 VACUUM 压缩，避免阻塞 GUI 启动
+        import threading
+        t = threading.Thread(target=self.auto_cleanup_data, args=(30,), daemon=True)
+        t.start()
 
     def _get_conn(self):
         """ Get database connection with custom timeouts and parameters """

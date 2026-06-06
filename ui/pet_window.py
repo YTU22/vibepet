@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -1582,17 +1582,13 @@ class PetWindow(QWidget):
 
     def _check_for_updates(self):
         """ 启动时检测网站 API 是否有新版本 """
-        try:
-            req = urllib.request.Request(
-                "https://vibeharbor.art/api/github/vibepet/latest",
-                headers={"User-Agent": "VibePet-UpdateChecker"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            latest = data.get("tag_name", "").lstrip("v")
-            if not latest:
-                return
-            
+        from ui.settings_dialog import UpdateCheckThread
+        self._update_check_thread = UpdateCheckThread(self)
+        self._update_check_thread.finished.connect(self._on_auto_update_check_finished)
+        self._update_check_thread.start()
+
+    def _on_auto_update_check_finished(self, success, latest, download_url, error_msg):
+        if success:
             def parse_ver(v):
                 try:
                     parts = [int(x) for x in v.split(".")]
@@ -1609,8 +1605,8 @@ class PetWindow(QWidget):
                 logger.info(f"New version available: v{latest}")
             else:
                 logger.info(f"Current version {APP_VERSION} is up to date.")
-        except Exception as e:
-            logger.warning(f"Auto update check failed: {e}")
+        else:
+            logger.warning(f"Auto update check failed: {error_msg}")
 
     def on_todo_added(self, text):
         """ 便签新增待办的回调 """

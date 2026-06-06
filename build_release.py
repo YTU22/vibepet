@@ -80,7 +80,7 @@ def run_build():
 
     # 6. Create Release Zip
     print("[3/4] 正在打包归档 Release Zip 文件...")
-    zip_path = os.path.join(dist_dir, "VibePet-v1.2.7.zip")
+    zip_path = os.path.join(dist_dir, "VibePet-v1.2.8.zip")
     if os.path.exists(zip_path):
         try:
             os.remove(zip_path)
