@@ -125,6 +125,11 @@ class ReminderManager:
 
         # 检查是否启用了随机情绪
         if not self.config.get("random_emotions", True):
+            if self.random_emotion_active:
+                self.random_emotion_active = False
+                self.random_emotion_state = "idle"
+                self.random_emotion_until = 0
+                logger.info("Random emotions disabled, resetting active random emotion to idle.")
             return
 
         # 获取当前时间段的概率配置
@@ -160,6 +165,13 @@ class ReminderManager:
                     texts = {"tired": "有点累了呢... 😔", "sleep": "zzz... 小憩一下~", "happy": "今天状态不错呢~ 😊"}
                     self.bubble_callback(texts.get(target_emotion, ""))
             return
+        else:
+            # 如果之前是100%永久状态，但现在概率配置变了（不再是100%），则清除该永久状态
+            if self.random_emotion_until == float('inf'):
+                self.random_emotion_active = False
+                self.random_emotion_state = "idle"
+                self.random_emotion_until = 0
+                logger.info("Permanent random emotion cleared because probability is no longer 100%.")
 
         # 如果随机情绪已过期，重置状态
         if self.random_emotion_active and now >= self.random_emotion_until:
