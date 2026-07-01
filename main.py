@@ -130,7 +130,7 @@ def main():
         pet_win = PetWindow(db_mgr, config_mgr, reminder_mgr)
         # 根据配置决定是否保持窗口置顶
         if config_mgr.get("reduce_window_interference", True):
-            pet_win.setWindowFlag(Qt.WindowStaysOnTopHint, False)
+            pet_win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
             logger.info("已关闭窗口置顶标志以减少干扰")
         
         # ===== 关键修复：根据配置强制显示窗口 =====
