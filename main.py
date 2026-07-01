@@ -28,7 +28,8 @@ else:
 
 import logging
 from PyQt6.QtWidgets import QApplication, QMessageBox
-from PyQt6.QtCore import QLockFile
+from PyQt6.QtCore import QLockFile, Qt
+import psutil
 
 from utils.helpers import get_app_dir, create_desktop_shortcut, set_auto_start, resource_path
 
@@ -67,7 +68,6 @@ def main():
     lock_file = QLockFile(lock_path)
     if not lock_file.tryLock(100):
         # Notify the user that it's already running
-        # We need a temporary QApplication to show a warning box
         temp_app = QApplication(sys.argv)
         QMessageBox.warning(
             None,
@@ -76,6 +76,14 @@ def main():
         )
         logger.warning("Another instance is already running. Exiting.")
         sys.exit(1)
+    else:
+        # 已获取锁，设置低优先级进程以减少系统影响
+        try:
+            p = psutil.Process(os.getpid())
+            p.nice(psutil.IDLE_PRIORITY_CLASS)
+            logger.info("已将进程优先级设置为低（IDLE）以降低资源占用")
+        except Exception as e:
+            logger.warning(f"设置进程低优先级失败: {e}")
         
     # 2. Main Application Initialization
     app = QApplication(sys.argv)
@@ -85,6 +93,7 @@ def main():
     # 3. Component Instantiation
     try:
         config_mgr = ConfigManager()
+        logger.setLevel(getattr(logging, config_mgr.get("log_level", "INFO")))
         db_mgr = DatabaseManager()
         reminder_mgr = ReminderManager(config_mgr, db_mgr)
         
@@ -119,6 +128,10 @@ def main():
         
         # Main desktop pet window
         pet_win = PetWindow(db_mgr, config_mgr, reminder_mgr)
+        # 根据配置决定是否保持窗口置顶
+        if config_mgr.get("reduce_window_interference", True):
+            pet_win.setWindowFlag(Qt.WindowStaysOnTopHint, False)
+            logger.info("已关闭窗口置顶标志以减少干扰")
         
         # ===== 关键修复：根据配置强制显示窗口 =====
         if config_mgr.get("show_pet_on_startup", True):

@@ -210,12 +210,19 @@ class MonitorThread(QThread):
     def run(self):
         logger.info("Monitor background thread started.")
         
-        poll_interval = 2 # Poll every 2 seconds
+        poll_interval = max(1, self.config.get("sys_monitor_interval", 5))  # 读取配置的采样间隔（秒）
         flush_interval = 60 # Flush every 60 seconds
         
         last_flush_time = time.time()
         
+        prev_idle_state = None  # 用于检测 idle 状态变化
         while self._running:
+            # 检查是否有任何监控项被启用；若全部关闭，则直接休眠并跳过本轮采集
+            enabled_items = [name for name, flag in self.config.get("sys_monitor_items", {}).items() if flag]
+            if not enabled_items:
+                logger.info("所有系统监控项已关闭，暂时休眠 %ds" % poll_interval)
+                self.msleep(poll_interval * 1000)
+                continue
             # Check for config modifications on disk and reload if necessary
             if self.config.check_and_reload():
                 self.config_reloaded.emit()
@@ -225,6 +232,18 @@ class MonitorThread(QThread):
             # 1. Check if user is idle (no input for >= 5 minutes)
             idle_seconds = self.get_idle_time()
             is_currently_idle = idle_seconds >= 300.0
+            # 检测 idle 状态变化并动态调节轮询间隔
+            if prev_idle_state is None:
+                # 第一次检测，仅记录状态
+                prev_idle_state = is_currently_idle
+            elif prev_idle_state != is_currently_idle:
+                if is_currently_idle:
+                    logger.info(f"系统进入空闲，轮询间隔加倍至 {poll_interval * 2}s")
+                else:
+                    logger.info(f"系统恢复活跃，轮询间隔恢复为 {poll_interval}s")
+                prev_idle_state = is_currently_idle
+            # 根据当前 idle 状态决定本轮使用的实际轮询间隔
+            effective_poll = poll_interval * 2 if is_currently_idle else poll_interval
             self.is_idle = is_currently_idle
             
             if is_currently_idle:
@@ -234,7 +253,7 @@ class MonitorThread(QThread):
                 self.current_category = "idle"
             else:
                 # User is active, increment active time
-                self.active_time_since_idle += poll_interval
+                self.active_time_since_idle += effective_poll
                 
                 # 2. Get foreground process name and classify
                 raw_name = self.get_foreground_process_name()
@@ -247,14 +266,14 @@ class MonitorThread(QThread):
                     
                 # 3. Accumulate time in memory cache
                 cache_key = (normalized_name, self.current_category)
-                self.memory_cache[cache_key] = self.memory_cache.get(cache_key, 0) + poll_interval
+                self.memory_cache[cache_key] = self.memory_cache.get(cache_key, 0) + effective_poll
                 
                 # Add to temporary today counts (for real-time feedback before flush)
-                self.today_total += poll_interval
+                self.today_total += effective_poll
                 if self.current_category == "game":
-                    self.today_game += poll_interval
+                    self.today_game += effective_poll
                 elif self.current_category == "work":
-                    self.today_work += poll_interval
+                    self.today_work += effective_poll
 
             # 4. Check reminder rules and update animation state
             target_animation = self.reminder.check_rules(
@@ -288,7 +307,7 @@ class MonitorThread(QThread):
 
             # Sleep to match poll interval, accounting for execution time
             elapsed = time.time() - start_time
-            sleep_time = max(0.1, poll_interval - elapsed)
+            sleep_time = max(0.1, effective_poll - elapsed)
             self.msleep(int(sleep_time * 1000))
             
         logger.info("Monitor background thread stopping. Final flush...")
