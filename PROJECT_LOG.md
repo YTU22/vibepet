@@ -63,6 +63,12 @@
 - **验证**：如何验证、结果
 -->
 
+### 2026-07-20 12:30 | 版本 v1.2.12（发布）
+- **触发**：用户要求推送 GitHub 并包含安装包。
+- **改动**：提交 v1.2.12 全部源码（commit `ea2d768`）推送至 `main`；`python build_release.py` 打包生成 `dist/VibePet-v1.2.12.zip`（47MB，243 文件）；创建 GitHub Release `v1.2.12` 并上传 zip；发布后重启新版 VibePet.exe。
+- **踩坑**：首次打包失败——`dist/VibePet/VibePet.exe` 正在运行，`QMovie` 持有 `assets/work.gif` 文件句柄，PyInstaller 清理 dist 目录时 `WinError 32`。**打包前必须先关闭正在运行的 VibePet 实例。**
+- **验证**：zip 内容核验无隐私文件（config.json/usage.db/log/lock 均未包含），Release 资产上传成功（https://github.com/YTU22/vibepet/releases/tag/v1.2.12），新进程已运行。
+
 ### 2026-07-20 11:50 | 版本 v1.2.12
 - **触发**：用户反馈——①桌宠与截图软件（Snipaste、微信截图）冲突，截图自动复制后粘贴经常失败；②希望整体运行逻辑更清洁、丝滑、稳定。
 - **根因排查**：
