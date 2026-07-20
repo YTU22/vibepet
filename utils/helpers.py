@@ -33,6 +33,27 @@ def get_app_dir():
         # Resolve path relative to the directory of main.py which is parent of utils/
         return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
+# 截图工具识别（用于冲突规避：隐藏桌宠、暂停划词统计的 Ctrl+C 注入）
+# 进程名（已规范化，小写无 .exe 后缀）
+SCREENSHOT_PROCESS_NAMES = {
+    "snipaste",
+    "snippingtool",        # Windows 自带截图工具
+    "screenclippinghost",  # Win+Shift+S 系统截图
+}
+# 窗口类名（小写），用于识别进程名不变的截图界面
+SCREENSHOT_WINDOW_CLASSES = {
+    "snapshotwnd",  # 微信截图全屏窗口
+}
+
+def is_screenshot_tool(process_name=None, window_class=None):
+    """ 判断给定进程名或窗口类名是否属于已知截图工具 """
+    if process_name and normalize_process_name(process_name) in SCREENSHOT_PROCESS_NAMES:
+        return True
+    if window_class and window_class.strip().lower() in SCREENSHOT_WINDOW_CLASSES:
+        return True
+    return False
+
+
 def normalize_process_name(process_name):
     """ Standardize process name by converting to lowercase and stripping .exe suffix """
     if not process_name:

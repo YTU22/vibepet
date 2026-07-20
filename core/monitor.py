@@ -8,17 +8,20 @@ import win32process
 import win32api
 import psutil
 
-from utils.helpers import normalize_process_name
+from utils.helpers import normalize_process_name, is_screenshot_tool
 
 logger = logging.getLogger("vibe_pet")
 
 class MonitorThread(QThread):
     # Signals for communicating with PyQt UI
-    status_updated = pyqtSignal(str, str, bool, int, int)
+    # 末位 bool 为截图工具是否在前台（权威状态，供 UI 轮询兜底对齐）
+    status_updated = pyqtSignal(str, str, bool, int, int, bool)
     animation_changed = pyqtSignal(str)
     show_bubble = pyqtSignal(str)
     show_warning_dialog = pyqtSignal()
     config_reloaded = pyqtSignal()
+    # 截图工具（Snipaste/微信截图等）进入或退出前台时触发，用于即时隐藏/恢复桌宠
+    screenshot_mode_changed = pyqtSignal(bool)
 
     def __init__(self, db_manager, config_manager, reminder_manager, parent=None):
         super().__init__(parent)
@@ -46,6 +49,7 @@ class MonitorThread(QThread):
         self.current_category = "idle"
         self.is_idle = False
         self.current_animation = "idle"
+        self._screenshot_active = False
         
         # Set up callbacks in the reminder manager to emit Qt signals
         self.reminder.set_callbacks(
@@ -63,6 +67,14 @@ class MonitorThread(QThread):
         
         # 注册事件钩子
         self._register_event_hook()
+        # 初始化截图工具状态（桌宠启动时截图工具可能已在前台，此处仅置位不发信号）
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            class_name = win32gui.GetClassName(hwnd) if hwnd else ""
+            self._screenshot_active = is_screenshot_tool(
+                process_name=self._active_process_name, window_class=class_name)
+        except Exception:
+            pass
 
     def __del__(self):
         self._unregister_event_hook()
@@ -121,6 +133,19 @@ class MonitorThread(QThread):
         if event == EVENT_SYSTEM_FOREGROUND:
             name = self._lookup_foreground_process_by_hwnd(hwnd)
             self._active_process_name = name
+            self._update_screenshot_state(hwnd, name)
+
+    def _update_screenshot_state(self, hwnd, process_name):
+        """ 根据前台窗口的类名与进程名检测截图工具，状态变化时即时发出信号 """
+        try:
+            class_name = win32gui.GetClassName(hwnd) if hwnd else ""
+        except Exception:
+            class_name = ""
+        active = is_screenshot_tool(process_name=process_name, window_class=class_name)
+        if active != self._screenshot_active:
+            self._screenshot_active = active
+            self.screenshot_mode_changed.emit(active)
+            logger.info(f"截图模式{'开启' if active else '关闭'}（进程={process_name}, 类名={class_name}）")
 
     def _lookup_foreground_process_by_hwnd(self, hwnd):
         """ 根据窗口句柄查找进程名 """
@@ -228,7 +253,18 @@ class MonitorThread(QThread):
                 self.config_reloaded.emit()
                 
             start_time = time.time()
-            
+
+            # 0. 前台窗口自愈式复核：事件钩子之外每轮兜底一次（含窗口类名检测），
+            #    即使钩子事件丢失也能在一个轮询周期内恢复正确状态
+            try:
+                fg_hwnd = win32gui.GetForegroundWindow()
+                fg_name = self._lookup_foreground_process_by_hwnd(fg_hwnd)
+                if fg_name != "unknown":
+                    self._active_process_name = fg_name
+                self._update_screenshot_state(fg_hwnd, self._active_process_name)
+            except Exception:
+                pass
+
             # 1. Check if user is idle (no input for >= 5 minutes)
             idle_seconds = self.get_idle_time()
             is_currently_idle = idle_seconds >= 300.0
@@ -296,7 +332,8 @@ class MonitorThread(QThread):
                 self.current_category,
                 self.is_idle,
                 self.today_total,
-                self.today_game
+                self.today_game,
+                self._screenshot_active
             )
 
             # 6. Periodic flush to DB (every 60s)

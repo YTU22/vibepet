@@ -20,7 +20,7 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.2.11"
+APP_VERSION = "1.2.12"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -136,8 +136,9 @@ class PetWindow(QWidget):
         self._drag_start_pos = QPoint()  # 拖拽起始位置
         self.is_snapped = False          # 是否处于贴边隐藏状态
         self.snap_edge = None            # 贴在左侧还是右侧 ("left" / "right")
-        self._hidden_for_snipaste = False
-        self._todo_was_visible_before_snipaste = False
+        self._hidden_for_screenshot = False          # 是否因截图工具在前台而临时隐藏
+        self._pet_was_visible_before_screenshot = True   # 截图前桌宠是否可见
+        self._todo_was_visible_before_screenshot = False # 截图前便签是否可见
 
         # Initialize default animation state early for UI setup
         self.current_state = "idle"
@@ -1343,31 +1344,61 @@ class PetWindow(QWidget):
 
         logger.info("Settings applied to pet window and all active dialogs.")
 
-    @pyqtSlot(str, str, bool, int, int)
-    def on_status_updated(self, app_name, category, is_idle, today_total_s, today_game_s):
-        """ Handle status updates from the monitor thread """
-        # 0. Snipaste 截图冲突处理
-        is_snipaste = (app_name.lower() == "snipaste")
-        if is_snipaste:
-            if not self._hidden_for_snipaste:
-                self._hidden_for_snipaste = True
-                self._todo_was_visible_before_snipaste = self.todo_window is not None and self.todo_window.isVisible()
-                # 隐藏桌宠与便签窗口
-                self.hide()
-                if self.todo_window:
-                    self.todo_window.hide()
-                logger.info("[Snipaste 冲突规避] 检测到 Snipaste 启动，临时隐藏桌宠及便签")
-            # 即使在 snipaste 运行期间，直接返回，不更新 UI
+    @pyqtSlot(bool)
+    def on_screenshot_mode_changed(self, active):
+        """ 截图工具（Snipaste/微信截图等）进入或退出前台：即时隐藏/恢复桌宠与便签 """
+        self._set_screenshot_mode(active, source="事件钩子")
+
+    def _set_screenshot_mode(self, active, source=""):
+        """ 统一的截图模式切换逻辑（幂等），供事件钩子信号与轮询兜底共用 """
+        if active == self._hidden_for_screenshot:
             return
+        self._hidden_for_screenshot = active
+        if active:
+            # 记录进入截图前的可见状态，避免恢复时把用户手动隐藏的窗口又弹出来
+            self._pet_was_visible_before_screenshot = self.isVisible()
+            self._todo_was_visible_before_screenshot = self.todo_window is not None and self.todo_window.isVisible()
+            if self.isVisible():
+                self.hide()
+            if self.todo_window and self.todo_window.isVisible():
+                self.todo_window.hide()
+            logger.info(f"[截图冲突规避({source})] 检测到截图工具，临时隐藏桌宠及便签")
         else:
-            if self._hidden_for_snipaste:
-                self._hidden_for_snipaste = False
-                # 恢复显示桌宠
+            if self._pet_was_visible_before_screenshot:
                 self.show()
-                # 恢复显示便签窗口（如果之前是可见的）
-                if self._todo_was_visible_before_snipaste and self.todo_window:
-                    self.todo_window.show()
-                logger.info("[Snipaste 冲突规避] Snipaste 退出，恢复桌宠及便签显示")
+            if self._todo_was_visible_before_screenshot and self.todo_window:
+                self.todo_window.show()
+            logger.info(f"[截图冲突规避({source})] 截图工具退出，恢复桌宠及便签显示")
+
+    @staticmethod
+    def is_screenshot_tool_foreground():
+        """ 检测当前前台窗口是否为截图工具（进程名 + 窗口类名双重判定） """
+        try:
+            import win32gui
+            import win32process
+            import psutil
+            from utils.helpers import is_screenshot_tool
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd:
+                return False
+            class_name = win32gui.GetClassName(hwnd)
+            try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                proc_name = psutil.Process(pid).name() if pid else ""
+            except Exception:
+                proc_name = ""
+            return is_screenshot_tool(process_name=proc_name, window_class=class_name)
+        except Exception:
+            return False
+
+    @pyqtSlot(str, str, bool, int, int, bool)
+    def on_status_updated(self, app_name, category, is_idle, today_total_s, today_game_s, screenshot_active=False):
+        """ Handle status updates from the monitor thread """
+        # 0. 截图冲突同步：与监控线程的权威状态对齐（事件钩子之外的轮询兜底）
+        self._set_screenshot_mode(screenshot_active, source="轮询同步")
+        if self._hidden_for_screenshot:
+            # 截图期间不更新气泡等 UI
+            return
 
         # 1. Update system tray hover tooltip
         self.tray.update_tooltip(today_total_s, today_game_s)
@@ -1462,7 +1493,26 @@ class PetWindow(QWidget):
         """ 监测到可能存在划词选择，执行剪贴板备份、模拟复制及字数统计 """
         if not self.config.get("word_count_enabled", False):
             return
-            
+
+        # 冲突规避1：截图工具（Snipaste/微信截图等）在前台时绝不注入 Ctrl+C、不碰剪贴板。
+        # 截图同样靠"拖拽选区后松手"触发本函数，若此时模拟复制并还原剪贴板，
+        # 会把截图工具刚写入的图片冲掉，导致用户粘贴失败。
+        if self.is_screenshot_tool_foreground():
+            return
+
+        # 冲突规避2：前台窗口属于本程序自身（设置/统计等对话框）时跳过，
+        # 避免对自家窗口注入按键造成意外行为。
+        try:
+            import win32gui
+            import win32process
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                if pid == os.getpid():
+                    return
+        except Exception:
+            pass
+
         clipboard = QApplication.clipboard()
         # 1. 备份原先的剪贴板内容 (MimeData 包含各种格式，能进行深度还原，避免指针实效)
         old_mime = clipboard.mimeData()

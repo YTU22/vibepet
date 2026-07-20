@@ -167,6 +167,7 @@ def main():
         
         # Connect monitor signals to pet window slots
         monitor_thread.status_updated.connect(pet_win.on_status_updated)
+        monitor_thread.screenshot_mode_changed.connect(pet_win.on_screenshot_mode_changed)
         monitor_thread.animation_changed.connect(pet_win.load_animation)
         monitor_thread.show_bubble.connect(pet_win.show_bubble_message)
         monitor_thread.show_warning_dialog.connect(pet_win.trigger_fatigue_warning)
