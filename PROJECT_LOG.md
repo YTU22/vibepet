@@ -49,7 +49,7 @@
 
 - 版本 v1.2.14，功能完整，无已知未修复缺陷。
 - 已有分发产物：`dist/VibePet-v1.2.14.zip`（含双皮肤）。
-- **注意**：v1.2.13 与 v1.2.14 的变更尚未提交 git（用户暂缓提交/推送）。
+- **注意**：v1.2.13+v1.2.14 已提交本地（commit `7b95fa6`），尚未推送远程/发布 Release。
 - 历史日志见 `DEVLOG.md`（截至 v1.2.11）、`CHANGELOG.md`、`archives/walkthrough.md`。
 
 ---
