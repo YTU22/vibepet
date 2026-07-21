@@ -10,7 +10,7 @@
 
 - **名称**：VibePet（Windows 桌面宠物）
 - **作者**：YTU22 | **仓库**：https://github.com/YTU22/vibepet
-- **当前版本**：v1.2.12（2026-07-20）
+- **当前版本**：v1.2.14（2026-07-20）
 - **定位**：Windows 桌面宠物应用，集软件使用时长监测、健康提醒、系统监控、待办便签、统计看板于一体
 - **技术栈**：Python + PyQt6（UI）+ PyQt6-Charts（图表）+ SQLite3（存储）+ psutil/win32api（系统监控）+ win10toast（通知）+ PyInstaller（打包）
 
@@ -47,8 +47,9 @@
 
 ## 四、当前状态
 
-- 版本 v1.2.12，功能完整，无已知未修复缺陷。
-- 已有分发产物：`dist/VibePet-v1.2.11.zip`（v1.2.12 尚未打包发布）。
+- 版本 v1.2.14，功能完整，无已知未修复缺陷。
+- 已有分发产物：`dist/VibePet-v1.2.14.zip`（含双皮肤）。
+- **注意**：v1.2.13 与 v1.2.14 的变更尚未提交 git（用户暂缓提交/推送）。
 - 历史日志见 `DEVLOG.md`（截至 v1.2.11）、`CHANGELOG.md`、`archives/walkthrough.md`。
 
 ---
@@ -62,6 +63,33 @@
 - **文件**：涉及哪些文件
 - **验证**：如何验证、结果
 -->
+
+### 2026-07-20 15:40 | 版本 v1.2.14
+- **触发**：用户提供参考图 `C:\Geminiproject\d9f12e03623fc514309b97b927d207db.jpg`（羊毛毡质感深蓝灰小猫、翠绿大眼），要求：①参考此形象设计桌宠；②不要删除老设计，便于恢复；③保留按状态展示不同形态的能力。
+- **方案**：皮肤化架构——果冻史莱姆移入 `assets/skins/slime/`（完整保留），新形象放 `assets/skins/cat/`，配置项 `pet_skin` + 设置面板下拉切换，双皮肤 paddings 各自实测锚定。
+- **改动**：
+  1. 新增 `tools/generate_cat_assets.py`：噪声扰动边缘的绒毛剪影（双层：绒毛光晕+本体渐变+噪点纹理）、翠绿渐变大眼（瞳孔+双高光）、粉内耳、胡须、贝塞尔曲线串球尾巴（可摇摆/翘起）；6 状态 24 帧循环动画，含飞机耳（angry）、垂耳（tired）等猫系语言。
+  2. 资产迁移：`assets/{state}.gif|pet_*.png` → `assets/skins/slime/`；`tools/generate_pet_assets.py` 输出路径同步改为 skins/slime，其图标输出降级为皮肤内备份（根目录 icon 由默认皮肤 cat 生成）。
+  3. `ui/pet_window.py`：新增 `_asset_path()`（skins/<skin>/ 优先，根目录回退）与模块级 `SKIN_PADDINGS` 双皮肤锚定表；`reposition_components` 按皮肤查表。
+  4. `core/config.py`：新增 `"pet_skin": "cat"` 默认值（旧配置自动补齐，默认启用小猫）。
+  5. `ui/settings_dialog.py`：外观 Tab 新增「宠物形象」下拉（墨团小猫/果冻史莱姆），load/save/reset 三处接线；皮肤切换经 `on_settings_changed → set_pet_size → load_animation` 链路自动生效。
+  6. 图标更换为小猫形象；版本号 v1.2.13 → v1.2.14（四处同步），CHANGELOG 更新。
+- **文件**：`tools/generate_cat_assets.py`（新增）、`tools/generate_pet_assets.py`、`assets/skins/**`、`assets/icon.*`、`ui/pet_window.py`、`ui/settings_dialog.py`、`core/config.py`、`ui/tray_icon.py`、`build_release.py`、`CHANGELOG.md`
+- **验证**：`tools/preview_cat.png` 六状态 QA 预览 + 全分辨率局部复检通过（绒毛/大眼/耳/须/尾细节到位）；`py_compile` 全量通过。
+
+### 2026-07-20 14:10 | 版本 v1.2.13
+- **触发**：用户反馈桌宠形象不美观（尤其部分状态）、动效少且单一，要求升级优化；提供了 `C:\Geminiproject\hatch-pet`（另一 agent 的桌宠生成 skill）作为参考。
+- **方案决策**：hatch-pet 是 Codex 专用的 8x11 雪碧图工作流，依赖其平台私有的 `$imagegen` 图像生成技能与 Codex 运行时，本环境不可用，且其雪碧图格式与 VibePet 的 6 状态 GIF/PNG 体系不兼容。因此仅借鉴其"逐状态生成 + QA 预览图"思路，改用 **numpy + PIL 程序化渲染** 全新形象。
+- **改动**：
+  1. 新增 `tools/generate_pet_assets.py` 渲染器：4 倍超采样抗锯齿；superellipse 软边果冻身体（垂直渐变 + 径向高光 + 底部内阴影 + 左上光泽斑 + 落地接触阴影）；每状态独立表情/配色/特效。
+  2. 6 状态全部升级为 24 帧循环 GIF（70ms/帧）：idle 呼吸+眨眼、work 打字弹跳+火花、happy 高弹跳+爱心、tired 重眼皮+汗滴、sleep 趴扁+Zzz、angry 震动+怒气符号+蒸汽。
+  3. GIF 采用全局共享调色板 + Floyd-Steinberg 抖动量化，解决首轮产出渐变色带问题（256 色限制）。
+  4. 静态 PNG（代表帧）、icon.png/icon.ico 同步重绘。
+  5. `ui/pet_window.py` 的 `gif_paddings`/`png_paddings` 按渲染器实测的本体 bbox 更新（气泡/面板锚定）。
+  6. 版本号 v1.2.12 → v1.2.13（四处同步），CHANGELOG 更新。
+- **文件**：`tools/generate_pet_assets.py`（新增）、`assets/*.gif|png|ico`（全部重绘，旧像素风资产可从 git 历史恢复）、`ui/pet_window.py`、`ui/settings_dialog.py`、`ui/tray_icon.py`、`build_release.py`、`CHANGELOG.md`
+- **验证**：`tools/preview_sheet.png` 六状态 × 六帧 QA 预览通过；GIF 抽帧复检抖动后渐变色带已消除、表情可读；`py_compile` 通过。
+- **踩坑**：① PIL `arc/line` 的 width 必须 int，float 会 TypeError；② 渲染器内坐标系混用（画布 1024 vs 最终 256）曾导致身体位置错误，已在入口统一换算；③ PIL 自动量化会产生明显色带，必须共享调色板 + 抖动。
 
 ### 2026-07-20 12:30 | 版本 v1.2.12（发布）
 - **触发**：用户要求推送 GitHub 并包含安装包。

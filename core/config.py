@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
     "update_mirror": "直连 GitHub",
     # 宠物窗口外观与行为设置
     "pet_size": 200,                  # 宠物窗口大小（像素），默认200
+    "pet_skin": "cat",                # 宠物形象皮肤：cat(墨团小猫)/slime(果冻史莱姆)
     "window_x": None,                 # 窗口上次X坐标
     "window_y": None,                 # 窗口上次Y坐标
     "window_locked": False,           # 窗口位置是否锁定（禁止拖拽）

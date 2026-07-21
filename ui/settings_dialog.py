@@ -19,7 +19,7 @@ from PyQt6.QtGui import QDesktopServices, QKeySequence, QPainter, QBrush, QPen, 
 
 from utils.helpers import resource_path, set_auto_start, is_auto_start_enabled, get_app_dir
 
-APP_VERSION = "1.2.12"
+APP_VERSION = "1.2.14"
 
 logger = logging.getLogger("vibe_pet")
 
@@ -428,6 +428,14 @@ class SettingsDialog(QDialog):
         self.combo_theme.addItems(["暗黑模式", "明亮模式"])
         self.combo_theme.setMinimumWidth(140)
         pet_form.addRow("界面主题风格:", self.combo_theme)
+
+        # 宠物形象皮肤
+        self.combo_skin = QComboBox()
+        self.combo_skin.setView(QListView())
+        self.combo_skin.addItem("墨团小猫", "cat")
+        self.combo_skin.addItem("果冻史莱姆", "slime")
+        self.combo_skin.setMinimumWidth(140)
+        pet_form.addRow("宠物形象:", self.combo_skin)
 
         pet_group.setLayout(pet_form)
         appearance_layout.addWidget(pet_group)
@@ -1149,6 +1157,8 @@ class SettingsDialog(QDialog):
         self.cb_todo_visible.setChecked(self.config.get("todo_visible", False))
         theme_val = self.config.get("theme_mode", "light")
         self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
+        skin_val = self.config.get("pet_skin", "cat")
+        self.combo_skin.setCurrentIndex(1 if skin_val == "slime" else 0)
 
         # 气泡透明度
         opacity = int(self.config.get("bubble_opacity", 1.0) * 100)
@@ -1273,6 +1283,7 @@ class SettingsDialog(QDialog):
         self.config.set("app_bubble_font_size", self.sb_bubble_font_size.value())
         theme_val = "light" if self.combo_theme.currentIndex() == 1 else "dark"
         self.config.set("theme_mode", theme_val)
+        self.config.set("pet_skin", self.combo_skin.currentData())
 
         # 系统监控设置
         self.config.set("sys_monitor_enabled", self.cb_sysmon_enabled.isChecked())
@@ -1386,6 +1397,7 @@ class SettingsDialog(QDialog):
         self.config.set("bubble_opacity", DEFAULT_CONFIG["bubble_opacity"])
         self.config.set("app_bubble_font_size", DEFAULT_CONFIG.get("app_bubble_font_size", 9))
         self.config.set("theme_mode", DEFAULT_CONFIG["theme_mode"])
+        self.config.set("pet_skin", DEFAULT_CONFIG.get("pet_skin", "cat"))
         self.config.save_config()
         self.slider_size.setValue(DEFAULT_CONFIG["pet_size"])
         self.lbl_size_value.setText(f"{DEFAULT_CONFIG['pet_size']} px")
@@ -1400,6 +1412,8 @@ class SettingsDialog(QDialog):
         self.sb_bubble_font_size.setValue(DEFAULT_CONFIG.get("app_bubble_font_size", 9))
         theme_val = DEFAULT_CONFIG["theme_mode"]
         self.combo_theme.setCurrentIndex(1 if theme_val == "light" else 0)
+        skin_val = DEFAULT_CONFIG.get("pet_skin", "cat")
+        self.combo_skin.setCurrentIndex(1 if skin_val == "slime" else 0)
         self.settings_changed.emit()
         self._show_ok("宠物外观已恢复为默认值！")
 

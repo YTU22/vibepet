@@ -20,9 +20,31 @@ from ui.tray_icon import TrayIcon
 from ui.todo_window import TodoWindow
 from core.sys_monitor import SystemMonitorThread
 
-APP_VERSION = "1.2.12"
+APP_VERSION = "1.2.14"
 
 logger = logging.getLogger("vibe_pet")
+
+# 各皮肤各状态的本体可视边界比例 (left, top, right, bottom)，
+# 由 tools/ 下对应渲染器按本体 bbox 实测生成，用于气泡/面板布局锚定
+SKIN_PADDINGS = {
+    "slime": {
+        "angry": (0.155, 0.360, 0.846, 0.977),
+        "happy": (0.145, 0.268, 0.856, 0.967),
+        "idle": (0.156, 0.371, 0.845, 0.976),
+        "sleep": (0.111, 0.470, 0.890, 0.963),
+        "tired": (0.134, 0.410, 0.859, 0.971),
+        "work": (0.159, 0.365, 0.842, 0.973),
+    },
+    "cat": {
+        "angry": (0.167, 0.314, 0.929, 0.947),
+        "happy": (0.159, 0.181, 0.925, 0.885),
+        "idle": (0.113, 0.322, 0.888, 0.895),
+        "sleep": (0.048, 0.411, 0.920, 0.901),
+        "tired": (0.075, 0.354, 0.894, 0.922),
+        "work": (0.176, 0.328, 0.932, 0.897),
+    },
+}
+DEFAULT_SKIN = "cat"
 
 
 class WordCountMonitorThread(QThread):
@@ -571,33 +593,14 @@ class PetWindow(QWidget):
         window_width = self.width()
         window_height = self.height()
         
-        # 1. 查找当前状态的原贴图可视边界比例 (left, top, right, bottom)
+        # 1. 查找当前皮肤当前状态的本体可视边界比例 (left, top, right, bottom)
         # 避免去裁剪磁盘上的原始资产（防打包下透明背景变黑异常），采用代码级比例规避
-        gif_paddings = {
-            "angry": (0.220, 0.187, 0.873, 0.907),
-            "happy": (0.253, 0.280, 0.780, 0.907),
-            "idle": (0.253, 0.373, 0.780, 0.907),
-            "sleep": (0.187, 0.280, 1.000, 0.907),
-            "tired": (0.220, 0.313, 0.813, 0.907),
-            "work": (0.253, 0.373, 0.780, 0.907),
-        }
-        png_paddings = {
-            "angry": (0.136, 0.108, 0.909, 0.860),
-            "happy": (0.052, 0.077, 0.965, 0.850),
-            "idle": (0.115, 0.220, 0.885, 0.871),
-            "sleep": (0.059, 0.063, 1.000, 0.853),
-            "tired": (0.077, 0.087, 0.990, 0.860),
-            "work": (0.098, 0.080, 0.969, 0.871),
-        }
-        
-        gif_path = resource_path(f"assets/{self.current_state}.gif")
-        if os.path.exists(gif_path):
-            paddings = gif_paddings
-        else:
-            paddings = png_paddings
+        skin = self.config.get("pet_skin", DEFAULT_SKIN)
+        skin_paddings = SKIN_PADDINGS.get(skin, SKIN_PADDINGS[DEFAULT_SKIN])
+        paddings = skin_paddings
             
         left_frac, top_frac, right_frac, bottom_frac = paddings.get(
-            self.current_state, (0.253, 0.373, 0.780, 0.907)
+            self.current_state, (0.15, 0.35, 0.85, 0.90)
         )
         
         # 2. 定位 pet_label (居中放置，保持 original 的 1:1 比例防止拉伸变形)
@@ -648,13 +651,21 @@ class PetWindow(QWidget):
             panel_y = head_top + (pet_visible_h - self.sys_panel.height()) // 2
             self.sys_panel.setGeometry(panel_x, panel_y, self.sys_panel.width(), self.sys_panel.height())
 
+    def _asset_path(self, filename):
+        """ 按当前皮肤解析资产路径：优先 assets/skins/<skin>/，回退根目录 assets/ """
+        skin = self.config.get("pet_skin", DEFAULT_SKIN)
+        skin_path = resource_path(f"assets/skins/{skin}/{filename}")
+        if os.path.exists(skin_path):
+            return skin_path
+        return resource_path(f"assets/{filename}")
+
     def load_animation(self, state_name):
         """ 加载 GIF 动态图，若不存在则回退至静态 PNG 宠物图片 """
         from PyQt6.QtGui import QMovie
         from PyQt6.QtCore import QSize
         
         # 1. 尝试加载 GIF 动画
-        gif_path = resource_path(f"assets/{state_name}.gif")
+        gif_path = self._asset_path(f"{state_name}.gif")
         if os.path.exists(gif_path):
             # 停止当前可能正在播放的 QMovie
             old_movie = self.pet_label.movie()
@@ -680,7 +691,7 @@ class PetWindow(QWidget):
             old_movie.stop()
             self.pet_label.setMovie(None)
 
-        img_path = resource_path(f"assets/pet_{state_name}.png")
+        img_path = self._asset_path(f"pet_{state_name}.png")
         pixmap = QPixmap()
         load_ok = False
 
